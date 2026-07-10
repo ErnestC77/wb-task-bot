@@ -1,10 +1,10 @@
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.database.repositories.audit_repository import AuditRepository
 from bot.database.repositories.setting_repository import SettingRepository
+from bot.services.audit_service import AuditService
 
 
 @dataclass(frozen=True)
@@ -141,7 +141,7 @@ class SettingService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repo = SettingRepository(session)
-        self.audit = AuditRepository(session)
+        self.audit = AuditService(session)
 
     def _def(self, key: str) -> SettingDef:
         if key not in SETTINGS_REGISTRY:
@@ -198,9 +198,8 @@ class SettingService:
         type_name = {int: "int", bool: "bool", str: "str"}.get(d.value_type, "json")
         await self.repo.upsert(key, json.dumps(value), type_name, d.category,
                                actor_user_id, is_editable=d.is_editable)
-        await self.audit.add(actor_user_id=actor_user_id, action="setting.set",
-                             setting_key=key, old_value_json=json.dumps(old),
-                             new_value_json=json.dumps(value))
+        await self.audit.log(actor_user_id, "setting.set",
+                             setting_key=key, old_value=old, new_value=value)
         await self._bump_version()
         invalidate(key)
 

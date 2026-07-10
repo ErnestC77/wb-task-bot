@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import Role, User
-from bot.database.repositories.audit_repository import AuditRepository
 from bot.database.repositories.permission_repository import PermissionRepository
+from bot.services.audit_service import AuditService
 from bot.utils.permissions import PERMISSION_KEYS
 
 
@@ -14,7 +14,7 @@ class PermissionService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.repo = PermissionRepository(session)
-        self.audit = AuditRepository(session)
+        self.audit = AuditService(session)
 
     async def has_permission(self, user: User | None, key: str) -> bool:
         if key not in PERMISSION_KEYS:
@@ -33,9 +33,9 @@ class PermissionService:
         if key not in PERMISSION_KEYS:
             raise KeyError(f"Неизвестное право: {key}")
         await self.repo.set_permission(target_user_id, key, True, actor.id)
-        await self.audit.add(actor_user_id=actor.id, action="permission.grant",
+        await self.audit.log(actor.id, "permission.grant",
                              entity_type="user", entity_id=str(target_user_id),
-                             new_value_json=f'"{key}"')
+                             new_value=key)
 
     async def revoke(self, actor: User, target_user_id: int, key: str,
                      force: bool = False) -> None:
@@ -45,9 +45,9 @@ class PermissionService:
             raise LastOwnerPermissionError(
                 "Снятие права управления с самого себя требует отдельного подтверждения")
         await self.repo.set_permission(target_user_id, key, False, actor.id)
-        await self.audit.add(actor_user_id=actor.id, action="permission.revoke",
+        await self.audit.log(actor.id, "permission.revoke",
                              entity_type="user", entity_id=str(target_user_id),
-                             old_value_json=f'"{key}"')
+                             old_value=key)
 
     async def list_permissions(self, user_id: int) -> dict[str, bool]:
         rows = {p.permission_key: p.is_allowed for p in await self.repo.get_for_user(user_id)}

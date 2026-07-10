@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,18 @@ async def test_set_valid_value_and_audit(session):          # тесты 4 и 7
     logs = list(await session.scalars(select(AdminAuditLog)))
     assert any(l.setting_key == "approval.timeout_hours" and l.new_value_json == "48"
                for l in logs)
+
+
+async def test_set_cyrillic_value_audit_not_escaped(session):
+    owner = await _owner(session)
+    svc = SettingService(session)
+    value = "Тестовое значение с кириллицей"
+    await svc.set("sync.sheet_users", value, actor_user_id=owner.id)
+    await session.commit()
+    logs = list(await session.scalars(select(AdminAuditLog)))
+    log = next(l for l in logs if l.setting_key == "sync.sheet_users")
+    assert json.loads(log.new_value_json) == value
+    assert "\\u" not in log.new_value_json
 
 
 async def test_wrong_type_rejected(session):                 # тест 5
