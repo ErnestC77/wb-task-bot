@@ -76,7 +76,25 @@ class SchedulerService:
                 await DeliveryService(session, self.bot, self.scheduler
                                       ).send_task_message(inst)
                 self.register_instance_jobs(inst)
-            config.next_run_at = compute_next_run(config, scheduled_at)
+            try:
+                config.next_run_at = compute_next_run(config, scheduled_at)
+            except Exception:
+                # Сообщение в Telegram (если inst создан) уже реально отправлено —
+                # это необратимо. TaskInstance (если создан) остаётся в БД: коммитим
+                # то, что уже сделано, а next_run_at сбрасываем в None, чтобы
+                # register_config_job ниже НЕ пересоздал job на битом расписании
+                # (иначе он будет падать на каждом срабатывании бесконечно).
+                # Job для конфига больше не переустанавливается — пока админ не
+                # поправит schedule_value/schedule_type и не вызовет rebuild_config_job.
+                logger.exception(
+                    "compute_next_run failed for config_id=%s schedule_type=%s "
+                    "schedule_value=%s: schedule is broken, config job will not "
+                    "be rescheduled until fixed",
+                    config.id, config.schedule_type, config.schedule_value,
+                )
+                config.next_run_at = None
+                await session.commit()
+                return
             await session.commit()
             self.register_config_job(config)
 

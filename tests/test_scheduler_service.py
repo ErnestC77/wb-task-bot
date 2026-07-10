@@ -1,5 +1,6 @@
 from datetime import datetime, time
 
+import pytest
 from unittest.mock import AsyncMock
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -42,6 +43,21 @@ def test_skip_weekends():
     assert nxt.weekday() == 0                                # понедельник 13.07
 
 
+def test_cron_valid_expression():
+    c = cfg(schedule_type="cron", schedule_value="30 14 * * *")
+    nxt = compute_next_run(c, datetime(2026, 7, 10, 9, 0))
+    assert nxt == datetime(2026, 7, 10, 14, 30)               # тот же день, 14:30
+
+    nxt_next_day = compute_next_run(c, datetime(2026, 7, 10, 15, 0))
+    assert nxt_next_day == datetime(2026, 7, 11, 14, 30)      # время уже прошло — завтра
+
+
+def test_cron_invalid_expression_raises():
+    c = cfg(schedule_type="cron", schedule_value="not a cron")
+    with pytest.raises(ValueError):
+        compute_next_run(c, datetime(2026, 7, 10, 9, 0))
+
+
 async def test_run_config_idempotent(session_factory):
     async with session_factory() as s:
         user = await UserRepository(s).upsert(telegram_id=1, name="Валя", role=Role.MANAGER_WB)
@@ -66,3 +82,55 @@ async def test_run_config_idempotent(session_factory):
     async with session_factory() as s:
         n = await s.scalar(select(func.count(TaskInstance.id)))
         assert n == 1                                     # дубля нет
+
+
+async def test_run_config_broken_schedule_does_not_lose_instance(session_factory):
+    """compute_next_run падает (битый schedule_value у weekly) ПОСЛЕ отправки
+    сообщения в Telegram — TaskInstance должен остаться закоммиченным
+    (сообщение уже реально ушло, откатывать его нельзя), а config job не должен
+    переустанавливаться на битом расписании (иначе он будет падать бесконечно)."""
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=3, name="Тест", role=Role.MANAGER_WB)
+        c = await TaskRepository(s).upsert_config(dict(
+            external_task_id="broken_weekly", title="Broken",
+            scenario="article_check", schedule_type="weekly",
+            schedule_value="monday",   # не int — compute_next_run упадёт на int()
+            time=time(9, 0), responsible_user_id=user.id, is_active=True,
+            next_run_at=datetime(2026, 7, 10, 9, 0)))
+        await s.commit()
+        cfg_id = c.id
+
+    bot = AsyncMock()
+    bot.send_message.return_value = AsyncMock(message_id=1, chat=AsyncMock(id=-100))
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, bot, session_factory)
+
+    await svc.run_config(cfg_id)                          # не должно упасть наружу
+
+    bot.send_message.assert_called_once()                 # сообщение реально отправлено
+    async with session_factory() as s:
+        n = await s.scalar(select(func.count(TaskInstance.id)))
+        assert n == 1                                      # TaskInstance не потерян
+        updated = await TaskRepository(s).get_config(cfg_id)
+        assert updated.next_run_at is None                 # job не переустановлен вслепую
+    assert scheduler.get_job(f"config:{cfg_id}") is None    # новый job не зарегистрирован
+
+
+async def test_rebuild_config_job_no_duplicate_jobs(session_factory):
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=4, name="Тест", role=Role.MANAGER_WB)
+        c = await TaskRepository(s).upsert_config(dict(
+            external_task_id="rebuild_check", title="Rebuild",
+            scenario="article_check", schedule_type="daily",
+            time=time(9, 0), responsible_user_id=user.id, is_active=True))
+        await s.commit()
+        cfg_id = c.id
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+
+    for _ in range(3):                                     # 3 вызова подряд — как при
+        await svc.rebuild_config_job(cfg_id)                # многократном сохранении настроек
+
+    jobs = [j for j in scheduler.get_jobs() if j.id == f"config:{cfg_id}"]
+    assert len(jobs) == 1                                  # без дублей, а не растёт с каждым вызовом
