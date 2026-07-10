@@ -1,9 +1,18 @@
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from bot.database.db import Base
 import bot.database.models  # noqa: F401 — регистрирует таблицы в metadata
+from bot.services import setting_service
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    setting_service.invalidate()
+    yield
+    setting_service.invalidate()
 
 
 @pytest_asyncio.fixture
