@@ -31,5 +31,5 @@ def validate_choice(raw: str, choices: list[str]) -> str:
 def validate_json_value(raw: str) -> object:
     try:
         return json.loads(raw)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         raise ValueError("Некорректный JSON") from None
