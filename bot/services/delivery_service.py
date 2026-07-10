@@ -11,6 +11,8 @@ from bot.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+DEFAULT_RETRY_DELAY_SECONDS = 300  # fallback, если general.telegram_retry_intervals пуст
+
 
 class DeliveryService:
     def __init__(self, session: AsyncSession, bot: Bot, scheduler=None) -> None:
@@ -25,6 +27,8 @@ class DeliveryService:
         from bot.keyboards.task_keyboards import keyboard_for_status
         from bot.utils.message_templates import render_task_message
 
+        if inst.delivery_status == DeliveryStatus.SENT:
+            return True                                # уже доставлено — не дублируем
         chat_id = int(await self.settings.get("general.group_chat_id"))
         attempt = inst.delivery_attempts + 1
         try:
@@ -58,7 +62,8 @@ class DeliveryService:
             inst.next_retry_at = None
             logger.error("Delivery abandoned for instance=%s: %s", inst.id, error)
             return
-        delay = intervals[min(attempt - 1, len(intervals) - 1)]
+        delay = (intervals[min(attempt - 1, len(intervals) - 1)] if intervals
+                 else DEFAULT_RETRY_DELAY_SECONDS)
         inst.delivery_status = DeliveryStatus.RETRYING
         inst.next_retry_at = datetime.utcnow() + timedelta(seconds=delay)
         if self.scheduler is not None:
