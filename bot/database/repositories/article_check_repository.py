@@ -17,6 +17,8 @@ class ArticleCheckRepository:
     async def create_session(self, task_instance_id: int, responsible_user_id: int,
                              batch_size: int, articles: list[Article],
                              ) -> ArticleCheckSession | None:
+        # Идемпотентность (защита от повторного старта) держится на
+        # UniqueConstraint(task_instance_id) у ArticleCheckSession в models.py.
         chk = ArticleCheckSession(
             task_instance_id=task_instance_id, responsible_user_id=responsible_user_id,
             status=SessionStatus.ACTIVE, total_articles=len(articles),
@@ -60,8 +62,7 @@ class ArticleCheckRepository:
             .where(ArticleCheckItem.id == item_id,
                    ArticleCheckItem.version == expected_version)
             .values(check_status=status, checked_by_user_id=user_id,
-                    checked_at=datetime.utcnow(), version=expected_version + 1)
-            .execution_options(synchronize_session=False))
+                    checked_at=datetime.utcnow(), version=expected_version + 1))
         await self.session.flush()
         return result.rowcount == 1
 

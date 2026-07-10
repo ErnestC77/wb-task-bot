@@ -43,6 +43,9 @@ class TaskRepository:
         self, config: TaskConfig, scheduled_at: datetime,
         due_at: datetime | None, snapshot: dict,
     ) -> TaskInstance | None:
+        # Идемпотентность держится на UniqueConstraint(config_id, scheduled_at)
+        # у TaskInstance в models.py — это не тестовый фикс, а гарантия на
+        # уровне схемы БД (IntegrityError ловится ниже как «дубль планового запуска»).
         inst = TaskInstance(
             config_id=config.id,
             responsible_user_id=config.responsible_user_id,

@@ -53,9 +53,36 @@ async def test_second_session_for_same_instance_rejected(session):   # тест 
 async def test_mark_item_optimistic_lock(session):
     chk, s, _, user = await make_session_with_articles(session, 5)
     item = (await chk.get_items_for_batch(s.id, 1, 15))[0]
-    ok = await chk.mark_item(item.id, item.version, CheckStatus.ACTION_REQUIRED, user.id)
-    stale = await chk.mark_item(item.id, item.version, CheckStatus.CHECKED_NO_ACTION, user.id)
+    # Захватываем version ОДИН раз до обоих вызовов — второй вызов симулирует
+    # второго пользователя, нажавшего кнопку со старым callback_data, пока
+    # первый уже успешно обновил item (а не повторное чтение уже
+    # смутировавшего в памяти item.version).
+    expected_version = item.version
+    ok = await chk.mark_item(item.id, expected_version, CheckStatus.ACTION_REQUIRED, user.id)
+    stale = await chk.mark_item(item.id, expected_version, CheckStatus.CHECKED_NO_ACTION, user.id)
     await session.commit()
     assert ok is True and stale is False     # устаревшая version отклонена
     counts = await chk.count_by_status(s.id)
     assert counts["action_required"] == 1 and counts["pending"] == 4
+
+
+async def test_mark_item_visible_in_same_session(session):
+    # Регрессия: synchronize_session=False в mark_item приводил к тому, что
+    # get_item()/get_items_for_batch()/pending_in_batch() в той же сессии
+    # видели устаревшие данные из identity map после успешного mark_item.
+    chk, s, _, user = await make_session_with_articles(session, 5)
+    items = await chk.get_items_for_batch(s.id, 1, 15)
+    target = items[0]
+    original_version = target.version
+
+    assert await chk.pending_in_batch(s.id, 1, 15) == 5
+
+    ok = await chk.mark_item(target.id, original_version, CheckStatus.ACTION_REQUIRED, user.id)
+    await session.commit()
+    assert ok is True
+
+    refreshed = await chk.get_item(target.id)
+    assert refreshed.check_status == CheckStatus.ACTION_REQUIRED
+    assert refreshed.version == original_version + 1
+
+    assert await chk.pending_in_batch(s.id, 1, 15) == 4
