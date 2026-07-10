@@ -1,8 +1,13 @@
 from datetime import datetime
 
-from bot.database.models import TaskInstance, TaskStatus
+from bot.database.models import ArticleCheckItem, TaskInstance, TaskQuestion, TaskStatus
 from bot.keyboards.task_keyboards import TaskCb, keyboard_for_status
-from bot.utils.message_templates import render_task_message
+from bot.utils.message_templates import (
+    render_approval_request,
+    render_question_message,
+    render_reminder,
+    render_task_message,
+)
 
 
 def make_inst(status, scenario="article_check"):
@@ -38,6 +43,37 @@ def test_render_escapes_html():
     text = render_task_message(make_inst(TaskStatus.CREATED))
     assert "&lt;b&gt;" in text and "<b>все</b>" not in text
     assert "Валя" in text and "12:00" in text
+
+
+def test_render_reminder_escapes_html():
+    inst = make_inst(TaskStatus.CREATED)
+    inst.title_snapshot = "<script>x</script>"
+    text = render_reminder(inst, "Напоминание: {title}")
+    assert "&lt;script&gt;" in text and "<script>x</script>" not in text
+
+
+def test_render_approval_request_escapes_html():
+    inst = make_inst(TaskStatus.CREATED)
+    inst.responsible_name_snapshot = "<script>x</script>"
+    text = render_approval_request(inst)
+    assert "&lt;script&gt;" in text and "<script>x</script>" not in text
+
+
+def test_render_question_message_escapes_html():
+    inst = make_inst(TaskStatus.CREATED)
+    inst.title_snapshot = "<b>тест</b>"
+    q = TaskQuestion(
+        id=1, task_instance_id=1, from_user_id=1, to_user_id=2,
+        question_text="<script>x</script>", created_at=datetime(2026, 7, 10, 9))
+    item = ArticleCheckItem(
+        id=1, check_session_id=1,
+        article_snapshot="<b>art</b>", product_name_snapshot="<i>prod</i>")
+
+    text = render_question_message(q, inst, item=item)
+
+    assert "&lt;script&gt;" in text and "<script>x</script>" not in text
+    assert "&lt;b&gt;" in text and "<b>тест</b>" not in text and "<b>art</b>" not in text
+    assert "&lt;i&gt;" in text and "<i>prod</i>" not in text
 
 
 def test_callback_data_compact():
