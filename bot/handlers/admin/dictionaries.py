@@ -34,6 +34,8 @@ require_comment/default_next_check_days) -> добавить (FSM) / переи�
 (prefix="d"), НЕ `AdminCb` — каждый callback этого модуля и каждое
 FSM-продолжение сообщением заново проверяет actor + право `dictionaries.manage`.
 """
+import json
+
 from aiogram import Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -184,6 +186,21 @@ def render_entry_card(dict_name: str, entry) -> str:
         f"Порядок сортировки: {entry.sort_order}",
         f"Статус: {'активна' if entry.is_active else 'неактивна'}",
     ]
+    if dict_name == "decision_types":
+        # Бриф явно требует показывать это поле на карточке решения (task-30-brief.md:10).
+        # Мастер добавления его не заполняет (в брифе нет описания UX для выбора
+        # категорий) — сознательно оставлено редактируемым только напрямую в БД/
+        # будущей задачей; здесь — только отображение уже имеющегося значения.
+        raw = entry.allowed_categories_json
+        if raw:
+            try:
+                ids = json.loads(raw)
+                shown = ", ".join(str(i) for i in ids) if ids else "—"
+            except (TypeError, ValueError):
+                shown = "—"
+        else:
+            shown = "—"
+        lines.append(f"Допустимые категории (id): {shown}")
     if dict_name in EXTENDED_FIELDS_KINDS:
         lines.append(f"Обязательный комментарий: {'да' if entry.require_comment else 'нет'}")
         days = entry.default_next_check_days
@@ -345,7 +362,11 @@ async def handle_dic_add_message(message: Message, session, state: FSMContext) -
         return
 
     if step == "default_next_check_days":
-        days = None if raw in ("", "-") else validate_int(raw, 0)
+        try:
+            days = None if raw in ("", "-") else validate_int(raw, 0)
+        except ValueError as exc:
+            await message.answer(str(exc))
+            return
         entry = await create_entry(session, actor, kind, data["name"],
                                    require_comment=data.get("require_comment", False),
                                    default_next_check_days=days)

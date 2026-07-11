@@ -261,6 +261,28 @@ async def test_show_card_renders_extended_fields_for_problem(session):
     assert "Обязательный комментарий: да" in text and "3" in text
 
 
+async def test_show_card_renders_allowed_categories_for_decision(session):
+    """Регресс на находку ревью Task 30: карточка решения обязана показывать
+    allowed_categories_json (явное требование брифа), раньше поле не
+    отображалось вообще."""
+    import json as json_module
+
+    from bot.handlers.admin.dictionaries import handle_dic_callback
+    from bot.keyboards.admin.dictionaries import DicCb
+
+    owner = await _owner(session)
+    entry = DecisionType(name="Решение", sort_order=0,
+                         allowed_categories_json=json_module.dumps([1, 2]))
+    session.add(entry)
+    await session.commit()
+
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    await handle_dic_callback(callback, DicCb(a="card", kind="decision_types", id=entry.id), session)
+    text = callback.message.edit_text.await_args.args[0]
+    assert "Допустимые категории" in text and "1" in text and "2" in text
+
+
 async def test_show_card_unknown_entry_rejected(session):
     from bot.handlers.admin.dictionaries import handle_dic_callback
     from bot.keyboards.admin.dictionaries import DicCb
@@ -382,6 +404,46 @@ async def test_add_wizard_full_flow_for_problem_type(session):
     created = (await session.execute(
         select(ProblemType).where(ProblemType.name == "Новая проблема"))).scalar_one()
     assert created.require_comment is True and created.default_next_check_days == 7
+
+
+async def test_add_wizard_invalid_days_input_does_not_crash(session):
+    """Регресс на находку ревью Task 30: ввод не-числа на шаге
+    default_next_check_days раньше ронял необработанный ValueError вместо
+    понятного сообщения об ошибке."""
+    from bot.handlers.admin.dictionaries import handle_dic_add_message, handle_dic_callback
+    from bot.keyboards.admin.dictionaries import DicCb
+
+    owner = await _owner(session)
+    await session.commit()
+
+    state = FakeState()
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    await handle_dic_callback(callback, DicCb(a="add", kind="problem_types"), session, state)
+
+    m1 = AsyncMock()
+    m1.from_user.id = owner.telegram_id
+    m1.text = "Проблема"
+    await handle_dic_add_message(m1, session, state)
+
+    await handle_dic_callback(callback, DicCb(a="add_rc", kind="problem_types", id=0), session, state)
+    assert state.data["step"] == "default_next_check_days"
+
+    m2 = AsyncMock()
+    m2.from_user.id = owner.telegram_id
+    m2.text = "не число"
+    await handle_dic_add_message(m2, session, state)          # не должно упасть
+    m2.answer.assert_awaited()
+    assert state.state is not None                # состояние сохранено — можно ввести заново
+
+    m3 = AsyncMock()
+    m3.from_user.id = owner.telegram_id
+    m3.text = "5"
+    await handle_dic_add_message(m3, session, state)
+    assert state.state is None
+    created = (await session.execute(
+        select(ProblemType).where(ProblemType.name == "Проблема"))).scalar_one()
+    assert created.default_next_check_days == 5
 
 
 async def test_add_wizard_short_flow_for_article_category(session):
