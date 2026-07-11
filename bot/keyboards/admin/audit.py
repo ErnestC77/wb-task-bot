@@ -7,8 +7,11 @@ bot/handlers/admin/audit.py (см. его docstring). Ни у одного не�
 поля с default — баг Tasks 24-25 (aiogram подменяет пустую строку на None
 при unpack для nullable-полей) неприменим ни к одному из них. `mine: bool`
 у `AudCb` — булево default-поле, аналогично безопасным int-полям с default
-в остальных разделах (bool сериализуется как "True"/"False", не пустая
-строка, риска нет).
+в остальных разделах: aiogram сериализует bool через `str(int(value))` —
+"1"/"0", НЕ Python `str(bool(...))` ("True"/"False") — пустой строки не
+возникает ни при каком значении, риска нет (проверено эмпирически на
+установленной версии aiogram, см. `test_audcb_default_fields_roundtrip`,
+покрывающий именно default-значение `mine=False`).
 """
 from aiogram.filters.callback_data import CallbackData
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup

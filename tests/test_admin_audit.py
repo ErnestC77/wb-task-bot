@@ -109,6 +109,40 @@ async def test_bak_callback_rejects_actor_without_permission(session):
     callback.answer.assert_awaited_with("Недостаточно прав", show_alert=True)
 
 
+async def test_aud_only_permission_cannot_reach_bak_callback(session):
+    """Regression: audit.view и tasks.run_manual — независимые права,
+    проверяемые раздельными константами (AUDIT_PERMISSION/BACKUP_PERMISSION)
+    в общем модуле. Актор только с audit.view не должен пройти в BakCb."""
+    from bot.database.repositories.permission_repository import PermissionRepository
+    from bot.handlers.admin.audit import handle_bak_callback
+    from bot.keyboards.admin.audit import BakCb
+
+    partner = await UserRepository(session).upsert(telegram_id=6, name="P", role=Role.PARTNER)
+    await PermissionRepository(session).set_permission(partner.id, "audit.view", True, None)
+    await session.commit()
+
+    callback = AsyncMock()
+    callback.from_user.id = partner.telegram_id
+    await handle_bak_callback(callback, BakCb(a="recoverjobs"), session)
+    callback.answer.assert_awaited_with("Недостаточно прав", show_alert=True)
+
+
+async def test_bak_only_permission_cannot_reach_aud_callback(session):
+    """Обратный случай: только tasks.run_manual не должен пройти в AudCb."""
+    from bot.database.repositories.permission_repository import PermissionRepository
+    from bot.handlers.admin.audit import handle_aud_callback
+    from bot.keyboards.admin.audit import AudCb
+
+    partner = await UserRepository(session).upsert(telegram_id=7, name="P2", role=Role.PARTNER)
+    await PermissionRepository(session).set_permission(partner.id, "tasks.run_manual", True, None)
+    await session.commit()
+
+    callback = AsyncMock()
+    callback.from_user.id = partner.telegram_id
+    await handle_aud_callback(callback, AudCb(a="page"), session)
+    callback.answer.assert_awaited_with("Недостаточно прав", show_alert=True)
+
+
 # ---------------------------------------------------------------------------
 # Точки входа
 # ---------------------------------------------------------------------------
