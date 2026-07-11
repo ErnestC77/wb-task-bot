@@ -3,6 +3,7 @@ from datetime import date, datetime
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import lazyload
 
 from bot.database.models import (
     DeliveryStatus, TaskConfig, TaskInstance, TaskLog, TaskStatus,
@@ -93,9 +94,27 @@ class TaskRepository:
 
         В PostgreSQL with_for_update блокирует строку (гонки callback/scheduler);
         в SQLite (тесты) это no-op, но conditional WHERE по статусу сохраняется.
+
+        `lazyload(TaskInstance.config)`/`lazyload(TaskInstance.responsible_user)`
+        — КРИТИЧЕСКИЙ фикс (найден интеграционным тестом на реальном Postgres,
+        Task 38): оба поля объявлены `lazy="joined"` на модели, а `TaskConfig`
+        (загружаемый вместе через join) сам эагерно джойнит ЕЩЁ `responsible_user`
+        и `topic`. PostgreSQL физически запрещает `FOR UPDATE` на nullable-стороне
+        LEFT OUTER JOIN ("FeatureNotSupportedError: FOR UPDATE cannot be applied
+        to the nullable side of an outer join") — с эагер-джойнами по умолчанию
+        ЛЮБОЙ вызов transition_status (единственный безопасный механизм смены
+        статуса задачи во всём проекте) падал бы на реальной БД. В SQLite это
+        молча работало, потому что FOR UPDATE там — no-op, поэтому баг был
+        невидим все предыдущие тесты/задачи. `session.refresh(row)` ниже НЕ
+        передаёт `with_for_update`, поэтому корректно восстанавливает
+        `row.config`/`row.responsible_user` обычным (без FOR UPDATE) джойном —
+        поведение для вызывающего кода (например, `auto_approve_job`, который
+        читает `got.responsible_user.telegram_id`) не меняется.
         """
         row = await self.session.scalar(
-            select(TaskInstance).where(TaskInstance.id == instance_id).with_for_update())
+            select(TaskInstance).where(TaskInstance.id == instance_id)
+            .options(lazyload(TaskInstance.config), lazyload(TaskInstance.responsible_user))
+            .with_for_update())
         if row is None or row.status not in expected_statuses:
             return None
         old_status = row.status
@@ -110,7 +129,15 @@ class TaskRepository:
                                  action=action, old_status=old_status,
                                  new_status=new_status, comment=comment))
         await self.session.flush()
-        await self.session.refresh(row)
+        # attribute_names ОБЯЗАТЕЛЕН: refresh() без него повторно наполняет
+        # только УЖЕ загруженные атрибуты — а config/responsible_user намеренно
+        # не загружены (lazyload выше). Без явного attribute_names они остались
+        # бы unloaded, и последующий доступ вызывающего кода (например,
+        # `auto_approve_job`: `got.responsible_user.telegram_id`) попытался бы
+        # синхронный lazy-load вне greenlet-контекста async-сессии —
+        # `MissingGreenlet` (найдено этим же фиксом при прогоне полного
+        # юнит-набора после исправления Task 38, регресс на SQLite).
+        await self.session.refresh(row, attribute_names=["config", "responsible_user"])
         return row
 
     async def set_message_info(self, instance_id: int, chat_id: int,

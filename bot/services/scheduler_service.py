@@ -181,7 +181,19 @@ class SchedulerService:
 async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     from bot.database.repositories.task_repository import TaskRepository
 
-    scheduler = AsyncIOScheduler()
+    # timezone="UTC" ОБЯЗАТЕЛЕН (найдено интеграционным тестом на реальном
+    # времени, Task 38): весь проект планирует job'ы наивным `datetime.utcnow()`
+    # (compute_next_run, _not_past, reminder/overdue/auto_approve дедлайны и
+    # т.д.), а APScheduler без явного timezone берёт локальный часовой пояс
+    # ОС (`tzlocal`) и интерпретирует ЛЮБОЙ наивный `run_date` как локальное
+    # время. На сервере с локальным поясом ≠ UTC это сдвигает КАЖДЫЙ job на
+    # величину смещения: при сдвиге больше misfire_grace_time (`GRACE = 3600`
+    # везде в этом файле) job молча НЕ выполняется вообще (APScheduler
+    # считает его безнадёжно пропущенным). Базовый образ Dockerfile обычно
+    # UTC по умолчанию, поэтому баг латентный — но зависит от ОС/деплоя, а не
+    # от кода, что и обнаружил тест с реальным ожиданием на машине с
+    # локальным поясом UTC+4.
+    scheduler = AsyncIOScheduler(timezone="UTC")
     svc = SchedulerService(scheduler, bot, session_factory)
     scheduler.wb_service = svc                     # доступ из handlers через dispatcher
     async with session_factory() as session:
