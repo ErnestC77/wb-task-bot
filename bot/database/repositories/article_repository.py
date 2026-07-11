@@ -14,6 +14,15 @@ class ArticleRepository:
             stmt = stmt.order_by(Article.sort_order)
         return list(await self.session.scalars(stmt))
 
+    async def get_all(self, include_inactive: bool = False) -> list[Article]:
+        """Все артикулы (по умолчанию только активные), отсортированные по
+        sort_order — для списков в админ-панели (Task 29), тот же паттерн, что
+        UserRepository.get_all/TopicRepository.get_all/TaskRepository.get_all_configs."""
+        stmt = select(Article)
+        if not include_inactive:
+            stmt = stmt.where(Article.is_active.is_(True))
+        return list(await self.session.scalars(stmt.order_by(Article.sort_order)))
+
     async def get_by_article(self, article: str) -> Article | None:
         return await self.session.scalar(
             select(Article).where(Article.article == article))

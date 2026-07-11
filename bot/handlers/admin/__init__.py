@@ -46,3 +46,8 @@ from bot.handlers.admin import schedules as _schedules  # noqa: E402
 
 admin_router.include_router(_schedules.router)
 SECTION_HANDLERS["sch"] = _schedules.handle_schedules_section
+
+from bot.handlers.admin import articles as _articles  # noqa: E402
+
+admin_router.include_router(_articles.router)
+SECTION_HANDLERS["art"] = _articles.handle_articles_section

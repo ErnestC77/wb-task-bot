@@ -39,3 +39,10 @@ class AdminStates(StatesGroup):
     # расписания существующего шаблона (whitelist SCHEDULE_FIELD_LIST, поле
     # хранится в data как "field", как и в waiting_cfg_edit Task 27).
     waiting_sch_edit = State()
+
+    # Task 29 — раздел «📦 Артикулы»: редактирование одного текстового поля
+    # существующего артикула (название/sort_order/ответственный — поле хранится
+    # в data как "field") и мастер ручного добавления (шаг в data как "step":
+    # "article" -> "product_name").
+    waiting_art_edit = State()
+    waiting_art_add = State()
