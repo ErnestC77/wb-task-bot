@@ -100,9 +100,11 @@ async def handle_mark(callback: CallbackQuery, callback_data: ChkCb, session,
     if not ok:
         await callback.answer("Данные устарели, обновляю…", show_alert=False)
     if callback_data.st == "q":
-        # запуск FSM вопроса по артикулу — Task 19
+        # запуск FSM вопроса по артикулу — Task 19. state прокидывается явно
+        # (как и для "act" ниже) — без него FSM не сохранится между этим
+        # callback'ом и следующим текстовым сообщением пользователя.
         from bot.handlers.questions import start_article_question
-        await start_article_question(callback, callback_data.it, session)
+        await start_article_question(callback, callback_data.it, session, state)
         return
     if callback_data.st == "act":
         # запуск FSM фиксации действия. svc.mark() выше уже проверил, что actor —
