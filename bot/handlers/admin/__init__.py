@@ -62,3 +62,8 @@ from bot.handlers.admin import questions as _questions  # noqa: E402
 
 admin_router.include_router(_questions.router)
 SECTION_HANDLERS["qst"] = _questions.handle_questions_section
+
+from bot.handlers.admin import reports as _reports  # noqa: E402
+
+admin_router.include_router(_reports.router)
+SECTION_HANDLERS["rep"] = _reports.handle_reports_section

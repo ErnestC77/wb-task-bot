@@ -62,3 +62,8 @@ class AdminStates(StatesGroup):
     # settings.manage, а handle_value_message (settings.py) жёстко проверяет
     # именно settings.manage; общее состояние увело бы апдейт не в тот handler.
     waiting_qst_value = State()
+
+    # Task 32 — раздел «📊 Отчёты»: текстовый ввод для настроек категории
+    # reports. ОТДЕЛЬНОЕ состояние по той же причине, что и waiting_qst_value
+    # (Task 31) — своё право reports.manage, не settings.manage.
+    waiting_rep_value = State()

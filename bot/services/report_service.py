@@ -148,37 +148,50 @@ class ReportService:
         return await self.render(data, fmt)
 
 
-async def weekly_report_job(bot: Bot, session_factory) -> None:
+async def weekly_report_job(bot: Bot, session_factory,
+                            *, session: AsyncSession | None = None) -> None:
     """Job-обработчик (регистрируется SchedulerService.register_report_job).
 
-    Открывает собственную сессию, формирует отчёт и рассылает его в тему
-    reports.topic_key и лично каждому id из reports.private_receiver_ids.
-    Ошибки отправки логируются и не прерывают рассылку остальным получателям
-    (тот же паттерн, что и в reminder_service/approval_service).
+    Формирует отчёт и рассылает его в тему reports.topic_key и лично каждому
+    id из reports.private_receiver_ids. Ошибки отправки логируются и не
+    прерывают рассылку остальным получателям (тот же паттерн, что и в
+    reminder_service/approval_service).
+
+    `session` — опционально уже открытая сессия (Task 32: вызов из
+    админ-панели по кнопке «Сформировать и отправить сейчас», где сессия уже
+    открыта DbSessionMiddleware на текущий update). Если не передана (обычный
+    путь — вызов планировщиком), открывается новая через `session_factory`.
     """
+    if session is not None:
+        await _send_weekly_report(bot, session)
+        return
+    async with session_factory() as session:
+        await _send_weekly_report(bot, session)
+
+
+async def _send_weekly_report(bot: Bot, session: AsyncSession) -> None:
     from bot.database.repositories.topic_repository import TopicRepository
 
-    async with session_factory() as session:
-        svc = ReportService(session)
-        settings = SettingService(session)
-        text = await svc.build_weekly_report()
+    svc = ReportService(session)
+    settings = SettingService(session)
+    text = await svc.build_weekly_report()
 
-        chat_id = int(await settings.get("general.group_chat_id"))
-        topic_key = str(await settings.get("reports.topic_key"))
-        topic = await TopicRepository(session).get_by_key(topic_key)
-        thread_id = topic.message_thread_id if topic else None
+    chat_id = int(await settings.get("general.group_chat_id"))
+    topic_key = str(await settings.get("reports.topic_key"))
+    topic = await TopicRepository(session).get_by_key(topic_key)
+    thread_id = topic.message_thread_id if topic else None
+    try:
+        await bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=text)
+    except Exception as exc:                     # noqa: BLE001 — не рушим job
+        logger.warning("Weekly report topic send failed: %s", exc)
+
+    for receiver_id in list(await settings.get("reports.private_receiver_ids")):
         try:
-            await bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=text)
-        except Exception as exc:                     # noqa: BLE001 — не рушим job
-            logger.warning("Weekly report topic send failed: %s", exc)
-
-        for receiver_id in list(await settings.get("reports.private_receiver_ids")):
-            try:
-                # private_receiver_ids хранит сырые Telegram chat_id, не users.id —
-                # получатели могут быть не зарегистрированы в боте, поэтому здесь
-                # нет резолва через UserRepository (осознанно, подтверждено
-                # владельцем продукта).
-                await bot.send_message(chat_id=int(receiver_id), text=text)
-            except Exception as exc:                 # noqa: BLE001 — не рушим job
-                logger.warning("Weekly report private send to %s failed: %s",
-                               receiver_id, exc)
+            # private_receiver_ids хранит сырые Telegram chat_id, не users.id —
+            # получатели могут быть не зарегистрированы в боте, поэтому здесь
+            # нет резолва через UserRepository (осознанно, подтверждено
+            # владельцем продукта).
+            await bot.send_message(chat_id=int(receiver_id), text=text)
+        except Exception as exc:                 # noqa: BLE001 — не рушим job
+            logger.warning("Weekly report private send to %s failed: %s",
+                           receiver_id, exc)
