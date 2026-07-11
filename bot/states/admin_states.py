@@ -34,3 +34,8 @@ class AdminStates(StatesGroup):
     # (whitelist EDITABLE_FIELDS, поле хранится в data как "field").
     waiting_cfg_create = State()
     waiting_cfg_edit = State()
+
+    # Task 28 — раздел «📅 Расписания»: редактирование одного текстового поля
+    # расписания существующего шаблона (whitelist SCHEDULE_FIELD_LIST, поле
+    # хранится в data как "field", как и в waiting_cfg_edit Task 27).
+    waiting_sch_edit = State()
