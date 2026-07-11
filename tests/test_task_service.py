@@ -1,12 +1,21 @@
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from bot.database.models import Role, TaskStatus
 from bot.database.repositories.task_repository import TaskRepository
 from bot.database.repositories.user_repository import UserRepository
+from bot.services import task_service as task_service_module
 from bot.services.setting_service import SettingService
 from bot.services.task_service import TaskService
+
+
+def _pin_now(monkeypatch, dt: datetime) -> None:
+    """Детерминированно фиксирует now_tz внутри task_service, чтобы
+    postpone_to_tomorrow не зависел от реального времени запуска тестов."""
+    monkeypatch.setattr(task_service_module, "now_tz",
+                        lambda tz_name: dt.replace(tzinfo=ZoneInfo(tz_name)))
 
 
 async def make_config(session):
@@ -70,10 +79,31 @@ async def test_only_responsible_can_transition(session):
     assert got.status == TaskStatus.IN_PROGRESS
 
 
-async def test_postpone_to_tomorrow(session):
+async def test_postpone_to_tomorrow(session, monkeypatch):
+    _pin_now(monkeypatch, datetime(2026, 7, 10, 15, 0))
     cfg, valya = await make_config(session)
     svc = TaskService(session)
     inst = await svc.create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
     await session.commit()
     got = await svc.postpone_to_tomorrow(inst.id, valya)
     assert got.status == TaskStatus.POSTPONED and got.postponed_to.day == 11
+
+
+async def test_postpone_to_tomorrow_after_several_days_uses_real_today(session, monkeypatch):
+    """Task 14 fix: перенос может случиться через несколько дней после
+    scheduled_date (задача простояла в overdue/reminder-цикле) — "завтра"
+    должно считаться от реального текущего дня, а не от scheduled_date,
+    иначе получаем дату в прошлом."""
+    cfg, valya = await make_config(session)
+    svc = TaskService(session)
+    # Задача запланирована на 2026-07-10, но переносят её только на 3-й
+    # день после этого — 2026-07-13.
+    inst = await svc.create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+    await session.commit()
+    _pin_now(monkeypatch, datetime(2026, 7, 13, 10, 0))
+    got = await svc.postpone_to_tomorrow(inst.id, valya)
+    assert got.status == TaskStatus.POSTPONED
+    assert got.postponed_to == datetime(2026, 7, 14, 9, 0)   # реальное завтра
+    assert got.postponed_to.date() > datetime(2026, 7, 13, 10, 0).date()  # не в прошлом
+    # старая (сломанная) формула scheduled_date(07-10) + 1 день дала бы 07-11 — уже в прошлом
+    assert got.postponed_to.date() != datetime(2026, 7, 11).date()

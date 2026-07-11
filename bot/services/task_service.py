@@ -7,6 +7,7 @@ from bot.database.models import TaskConfig, TaskInstance, TaskScenario, TaskStat
 from bot.database.repositories.task_repository import TaskRepository
 from bot.database.repositories.topic_repository import TopicRepository
 from bot.services.setting_service import SettingService
+from bot.utils.datetime_utils import now_tz
 from bot.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -91,7 +92,14 @@ class TaskService:
         inst = await self.repo.get_instance(instance_id)
         if inst is None:
             return None
-        tomorrow = datetime.combine(inst.scheduled_date + timedelta(days=1), time(9, 0))
+        # "Завтра" считаем от реального текущего дня (general.timezone), а
+        # не от inst.scheduled_date: перенос может случиться через несколько
+        # суток после того, как задача была запланирована (например, после
+        # нескольких циклов reminder/overdue), и scheduled_date + 1 день
+        # тогда оказывается датой в прошлом.
+        tz_name = str(await self.settings.get("general.timezone"))
+        today_local = now_tz(tz_name).date()
+        tomorrow = datetime.combine(today_local + timedelta(days=1), time(9, 0))
         return await self.user_transition(
             instance_id, [TaskStatus.CREATED, TaskStatus.IN_PROGRESS],
             TaskStatus.POSTPONED, actor, "btn:postpone",
