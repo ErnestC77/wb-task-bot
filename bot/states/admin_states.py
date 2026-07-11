@@ -10,3 +10,12 @@ class AdminStates(StatesGroup):
 
     waiting_value = State()
     waiting_confirm = State()
+
+    # Task 25 — раздел «Пользователи и роли»: FSM добавления (add_id -> add_name
+    # -> add_role, где add_role выбирается кнопкой, а не сообщением) и
+    # редактирования имени/username существующего пользователя.
+    waiting_add_id = State()
+    waiting_add_name = State()
+    waiting_add_role = State()
+    waiting_edit_name = State()
+    waiting_edit_username = State()

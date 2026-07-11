@@ -333,3 +333,32 @@ def test_pagination_keyboard():                                # тест 21
     row = pagination_row("usr", page=2, total_pages=5)
     texts = [b.text for b in row]
     assert "⬅" in texts[0] and "2/5" in texts[1] and "➡" in texts[2]
+
+
+# ---------------------------------------------------------------------------
+# Regression (обнаружено при разработке Task 25, тестируя новый UsrCb):
+# aiogram считает ЛЮБОЕ поле CallbackData со значением по умолчанию
+# "nullable" и на .unpack() подменяет пустую строку "" на None — что раньше
+# ломало AdminCb.unpack() для ЛЮБОЙ кнопки, где `k` остаётся дефолтным (тип
+# был `k: str = ""`, а pydantic отклоняет None для str). Это разбивало вход
+# в КАЖДЫЙ пункт главного меню (admin_menu_keyboard: AdminCb(s=code), k не
+# задан) и «Назад» на верхних уровнях (AdminCb(s=section, a="menu")) — т.е.
+# весь админ-панель был недоступен в реальном Telegram, несмотря на зелёные
+# тесты (ни один прежний тест не гонял .unpack() именно на AdminCb с
+# дефолтным k). Исправление: `k: str | None = None` (см. AdminCb).
+# ---------------------------------------------------------------------------
+
+def test_admin_cb_default_k_roundtrips_through_pack_unpack():
+    from bot.keyboards.admin.main import MENU_ITEMS, AdminCb, admin_menu_keyboard
+
+    # 1) каждый пункт главного меню — ровно тот callback_data, что реально
+    #    уходит в кнопку при рендере admin_menu_keyboard
+    kb = admin_menu_keyboard({section for section, _ in MENU_ITEMS} | {"ops"})
+    for row in kb.inline_keyboard:
+        cb = AdminCb.unpack(row[0].callback_data)          # реальный round-trip
+        assert cb.a == "open" and cb.k is None
+
+    # 2) «Назад» с верхнего уровня раздела (a="menu", k не передан)
+    back = AdminCb(s="usr", a="menu")
+    back_cb = AdminCb.unpack(back.pack())
+    assert back_cb.s == "usr" and back_cb.a == "menu" and back_cb.k is None

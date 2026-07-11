@@ -26,3 +26,8 @@ from bot.handlers.admin import settings as _settings  # noqa: E402
 admin_router.include_router(_settings.router)
 SECTION_HANDLERS["set"] = _settings.handle_settings_section
 SECTION_HANDLERS["rem"] = _settings.handle_reminders_section
+
+from bot.handlers.admin import users as _users  # noqa: E402
+
+admin_router.include_router(_users.router)
+SECTION_HANDLERS["usr"] = _users.handle_users_section

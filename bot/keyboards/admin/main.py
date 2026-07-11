@@ -7,7 +7,22 @@ class AdminCb(CallbackData, prefix="ad"):
     a: str = "open"
     id: int = 0
     p: int = 1
-    k: str = ""
+    # Task 25 fix (обнаружено при тестировании UsrCb.pack()/.unpack(), см.
+    # bot/keyboards/admin/users.py): aiogram трактует ЛЮБОЕ поле со значением
+    # по умолчанию как "nullable" и на unpack() конвертирует пустую строку ""
+    # в None (aiogram/filters/callback_data.py: _check_field_is_nullable
+    # возвращает True, если у поля есть default, независимо от его типа) —
+    # но pydantic тут же отклоняет None для типа `str`. Раньше это было
+    # `k: str = ""`, и ЛЮБАЯ кнопка, где k остаётся дефолтным (например,
+    # весь admin_menu_keyboard — AdminCb(s=code) без явного k, и "Назад" на
+    # верхних уровнях, AdminCb(s=section, a="menu")), падала на
+    # AdminCb.unpack() в реальном Telegram — т.е. был сломан вход в КАЖДЫЙ
+    # пункт главного меню админ-панели. `str | None = None` — единственная
+    # аннотация, реально совместимая с этим поведением aiogram (None
+    # пакуется в "" через _encode_value, а unpack() восстанавливает "" -> None
+    # для nullable-полей). См. test_admin_cb_default_k_roundtrips в
+    # tests/test_admin_main.py.
+    k: str | None = None
 
 
 MENU_ITEMS: list[tuple[str, str]] = [
