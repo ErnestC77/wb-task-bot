@@ -12,7 +12,6 @@ from unittest.mock import AsyncMock
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from bot.database.models import Role
-from bot.database.repositories.task_repository import TaskRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.services.scheduler_service import SchedulerService
 from bot.services.setting_service import SettingService
