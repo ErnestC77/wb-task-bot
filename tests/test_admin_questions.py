@@ -311,6 +311,24 @@ async def test_routeset_rejects_non_route_key(session):
     callback.answer.assert_awaited_with("Недопустимый ключ маршрута", show_alert=True)
 
 
+async def test_routekey_rejects_non_route_key(session):
+    """Симметрия с test_routeset_rejects_non_route_key — обе точки входа в
+    маршрутный пикер обязаны отклонять индекс не-маршрутной настройки
+    одинаково (regression ревью Task 31)."""
+    from bot.handlers.admin.questions import handle_qst_callback
+    from bot.keyboards.admin.questions import QstCb
+
+    owner = await _owner(session)
+    await session.commit()
+
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    # index 1 = default_receiver_user_id, НЕ маршрут
+    await handle_qst_callback(
+        callback, QstCb(a="routekey", id=1, k="goods"), session, state=FakeState())
+    callback.answer.assert_awaited_with("Недопустимый ключ маршрута", show_alert=True)
+
+
 async def test_edit_route_by_category_alerts_when_no_active_categories(session):
     from bot.handlers.admin.questions import handle_qst_callback
     from bot.keyboards.admin.questions import QstCb

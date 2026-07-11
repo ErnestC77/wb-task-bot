@@ -35,7 +35,7 @@ from bot.database.models import ArticleCategory, User
 from bot.database.repositories.topic_repository import TopicRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.handlers.admin.settings import (
-    apply_setting_input, category_keys, key_by_index, parse_raw, render_setting_card,
+    apply_setting_input, category_keys, key_by_index, render_setting_card,
 )
 from bot.keyboards.admin.main import AdminCb, admin_menu_keyboard
 from bot.keyboards.admin.questions import (
@@ -268,6 +268,9 @@ async def _pick_route_key(callback: CallbackQuery, session, idx: int, token: str
         key = key_by_index("questions", idx)
     except KeyError as exc:
         await callback.answer(str(exc), show_alert=True)
+        return
+    if key not in ROUTE_SETTING_KEYS:
+        await callback.answer("Недопустимый ключ маршрута", show_alert=True)
         return
     label = await _resolve_route_business_key(session, key, token)
     if label is None:
