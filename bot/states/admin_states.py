@@ -67,3 +67,9 @@ class AdminStates(StatesGroup):
     # reports. ОТДЕЛЬНОЕ состояние по той же причине, что и waiting_qst_value
     # (Task 31) — своё право reports.manage, не settings.manage.
     waiting_rep_value = State()
+
+    # Task 33 — раздел «🔄 Синхронизация Google Sheets»: текстовый ввод для
+    # настроек категории sync (в т.ч. spreadsheet_id/имена листов). ОТДЕЛЬНОЕ
+    # состояние по той же причине, что и waiting_qst_value/waiting_rep_value —
+    # своё право sync.run, не settings.manage.
+    waiting_syn_value = State()

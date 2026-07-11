@@ -67,3 +67,8 @@ from bot.handlers.admin import reports as _reports  # noqa: E402
 
 admin_router.include_router(_reports.router)
 SECTION_HANDLERS["rep"] = _reports.handle_reports_section
+
+from bot.handlers.admin import sync as _sync  # noqa: E402
+
+admin_router.include_router(_sync.router)
+SECTION_HANDLERS["syn"] = _sync.handle_sync_section
