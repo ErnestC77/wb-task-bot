@@ -34,10 +34,21 @@ bot/handlers/admin/users.py) — брифовая аннотация "(→Task 2
 2. `recalc_next_run` — брифовый код делает `await session.flush()` (НЕ
    commit) перед вызовом `scheduler_svc.rebuild_config_job(config_id)`, а
    `rebuild_config_job` (Task 12) открывает СОБСТВЕННУЮ сессию через
-   `session_factory` — на Postgres не увидела бы только что записанное, но
-   не закоммиченное `next_run_at`/поля шаблона. Тот же класс бага, что и
-   Critical-фикс Task 27/28, повторно найденный и исправленный в Task 33
-   (`apply_setting_input`). Исправлено: `session.flush()` -> `session.commit()`.
+   `session_factory`. ВАЖНО (уточнение после ревью Task 34, чтобы не вводить
+   в заблуждение): это НЕ тот же Postgres-баг, что Critical-фикс Task 27/28/33
+   (`apply_schedule_field`/`apply_setting_input`) — там caller записывал
+   именно те поля (schedule_type/interval/value/time, sync.auto_enabled/
+   interval_minutes), которые rebuild-функция читает заново из своей сессии.
+   Здесь `rebuild_config_job` НЕ читает `next_run_at` вообще — он всегда
+   пересчитывает его самостоятельно через `compute_next_run` из полей
+   расписания, которые `recalc_next_run` не трогает, так что на Postgres
+   результат идентичен что при flush, что при commit. Причина исправления
+   уже: без коммита СЕССИЯ (не поле) остаётся в открытой транзакции на
+   SQLite/StaticPool в тестах, и `rebuild_config_job`'s `session_factory()`
+   не может открыть свою (та же физическая коннекция, "cannot start a
+   transaction within a transaction"). Коммит здесь — гигиена транзакции
+   для теста, не обязательное условие корректности на Postgres, но и не
+   вредит: делать его раньше по-прежнему безопасно.
 3. `force_close` — брифовый код переводит статус в COMPLETED/CANCELLED, но
    не проставляет `completed_at`/`cancelled_at` (в отличие от ВСЕХ остальных
    путей перехода в эти статусы — см. `approval_service.py`/

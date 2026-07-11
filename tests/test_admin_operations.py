@@ -241,6 +241,37 @@ async def test_recover_pending_deliveries_sends_and_counts(session):
     assert count == 1
 
 
+async def test_recover_scheduler_logs_audit_with_counters(session_factory):
+    from bot.handlers.admin.operations import recover_scheduler
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    async with session_factory() as s:
+        owner = await _owner(s)
+        await s.commit()
+        owner_id = owner.id
+
+    scheduler = AsyncIOScheduler()
+    counters = await recover_scheduler(scheduler, _bot(), session_factory, owner_id)
+    assert isinstance(counters, dict) and "configs" in counters
+
+    async with session_factory() as s:
+        logs = list(await s.scalars(select(AdminAuditLog)))
+        entry = next(l for l in logs if l.action == "scheduler.manual_recover")
+        assert entry.actor_user_id == owner_id
+
+
+async def test_test_topic_send_logs_audit_result(session):
+    from bot.handlers.admin.operations import test_topic_send
+    owner = await _owner(session)
+    await session.commit()
+    ok = await test_topic_send(session, _bot(), owner, "reminders")
+    await session.commit()
+    assert ok is True
+    logs = list(await session.scalars(select(AdminAuditLog)))
+    entry = next(l for l in logs if l.action == "topic.test_send")
+    assert entry.entity_id == "reminders" and entry.result == "ok"
+
+
 async def test_test_private_send_updates_private_chat_available(session):
     from bot.handlers.admin.operations import test_private_send
     owner = await _owner(session)
