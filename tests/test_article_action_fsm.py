@@ -317,6 +317,92 @@ async def test_action_category_rejects_item_id_spoofed_in_callback(session):
     assert await state.get_state() == ArticleActionStates.category.state
 
 
+async def test_action_problem_rejects_item_id_spoofed_in_callback(session):
+    """Callback с it, не совпадающим с item_id в FSM-данных — подделка, отказ."""
+    inst, valya, _, s, item = await _start_marked_item(session, n_articles=2)
+    cat = (await session.execute(select(ArticleCategory))).scalar_one()
+    prob = (await session.execute(select(ProblemType))).scalar_one()
+    from bot.handlers.article_check import (
+        handle_action_category, handle_action_problem, start_action_fsm,
+    )
+
+    state = _state_for(valya.telegram_id)
+    callback = AsyncMock()
+    callback.from_user.id = valya.telegram_id
+    await start_action_fsm(callback, item.id, session, state)
+    await handle_action_category(callback, ActCb(a="cat", id=cat.id, it=item.id), session, state)
+    callback.message.edit_text.reset_mock()
+
+    other_item_id = item.id + 1
+    await handle_action_problem(
+        callback, ActCb(a="prob", id=prob.id, it=other_item_id), session, state)
+    callback.answer.assert_awaited()
+    args, kwargs = callback.answer.call_args
+    assert kwargs.get("show_alert") is True
+    callback.message.edit_text.assert_not_awaited()
+    assert await state.get_state() == ArticleActionStates.problem.state
+
+
+async def test_action_decision_rejects_item_id_spoofed_in_callback(session):
+    """Callback с it, не совпадающим с item_id в FSM-данных — подделка, отказ."""
+    inst, valya, _, s, item = await _start_marked_item(session, n_articles=2)
+    cat = (await session.execute(select(ArticleCategory))).scalar_one()
+    prob = (await session.execute(select(ProblemType))).scalar_one()
+    dec = (await session.execute(select(DecisionType))).scalar_one()
+    from bot.handlers.article_check import (
+        handle_action_category, handle_action_decision, handle_action_problem, start_action_fsm,
+    )
+
+    state = _state_for(valya.telegram_id)
+    callback = AsyncMock()
+    callback.from_user.id = valya.telegram_id
+    await start_action_fsm(callback, item.id, session, state)
+    await handle_action_category(callback, ActCb(a="cat", id=cat.id, it=item.id), session, state)
+    await handle_action_problem(callback, ActCb(a="prob", id=prob.id, it=item.id), session, state)
+    callback.message.edit_text.reset_mock()
+
+    other_item_id = item.id + 1
+    await handle_action_decision(
+        callback, ActCb(a="dec", id=dec.id, it=other_item_id), session, state)
+    callback.answer.assert_awaited()
+    args, kwargs = callback.answer.call_args
+    assert kwargs.get("show_alert") is True
+    callback.message.edit_text.assert_not_awaited()
+    assert await state.get_state() == ArticleActionStates.decision.state
+
+
+async def test_action_skip_comment_rejects_item_id_spoofed_in_callback(session):
+    """Callback с it, не совпадающим с item_id в FSM-данных — подделка, отказ."""
+    inst, valya, _, s, item = await _start_marked_item(session, n_articles=2)
+    cat = (await session.execute(select(ArticleCategory))).scalar_one()
+    prob = (await session.execute(select(ProblemType))).scalar_one()
+    dec = (await session.execute(select(DecisionType))).scalar_one()
+    from bot.handlers.article_check import (
+        handle_action_category, handle_action_decision, handle_action_problem,
+        handle_action_skip_comment, start_action_fsm,
+    )
+
+    state = _state_for(valya.telegram_id)
+    callback = AsyncMock()
+    callback.from_user.id = valya.telegram_id
+    await start_action_fsm(callback, item.id, session, state)
+    await handle_action_category(callback, ActCb(a="cat", id=cat.id, it=item.id), session, state)
+    await handle_action_problem(callback, ActCb(a="prob", id=prob.id, it=item.id), session, state)
+    await handle_action_decision(callback, ActCb(a="dec", id=dec.id, it=item.id), session, state)
+    callback.message.edit_text.reset_mock()
+
+    other_item_id = item.id + 1
+    await handle_action_skip_comment(
+        callback, ActCb(a="skip", id=0, it=other_item_id), session, state)
+    callback.answer.assert_awaited()
+    args, kwargs = callback.answer.call_args
+    assert kwargs.get("show_alert") is True
+    callback.message.edit_text.assert_not_awaited()
+    assert await state.get_state() == ArticleActionStates.comment.state
+    data = await state.get_data()
+    assert "comment" not in data                                  # БД/состояние не изменились
+
+
 async def test_action_problem_denies_foreign_registered_user(session):
     inst, valya, owner, s, item = await _start_marked_item(session)
     cat = (await session.execute(select(ArticleCategory))).scalar_one()
