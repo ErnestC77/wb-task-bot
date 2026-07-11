@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -114,6 +114,20 @@ class TaskRepository:
     async def get_by_status(self, status: str) -> list[TaskInstance]:
         return list(await self.session.scalars(
             select(TaskInstance).where(TaskInstance.status == status)
+            .order_by(TaskInstance.due_at)))
+
+    async def get_by_scheduled_date(self, day: date) -> list[TaskInstance]:
+        """Task 20: /today — все инстансы, запланированные на конкретный день
+        (фильтрация по actor'у — на уровне handler'а, не здесь)."""
+        return list(await self.session.scalars(
+            select(TaskInstance).where(TaskInstance.scheduled_date == day)
+            .order_by(TaskInstance.due_at)))
+
+    async def get_all_open_instances(self) -> list[TaskInstance]:
+        """Task 20: /my_tasks для owner/partner — открытые задачи ВСЕХ сотрудников
+        (правило плана: owner и partner видят все задачи)."""
+        return list(await self.session.scalars(
+            select(TaskInstance).where(TaskInstance.status.in_(OPEN_STATUSES))
             .order_by(TaskInstance.due_at)))
 
     async def get_waiting_approval(self) -> list[TaskInstance]:
