@@ -174,6 +174,10 @@ async def weekly_report_job(bot: Bot, session_factory) -> None:
 
         for receiver_id in list(await settings.get("reports.private_receiver_ids")):
             try:
+                # private_receiver_ids хранит сырые Telegram chat_id, не users.id —
+                # получатели могут быть не зарегистрированы в боте, поэтому здесь
+                # нет резолва через UserRepository (осознанно, подтверждено
+                # владельцем продукта).
                 await bot.send_message(chat_id=int(receiver_id), text=text)
             except Exception as exc:                 # noqa: BLE001 — не рушим job
                 logger.warning("Weekly report private send to %s failed: %s",

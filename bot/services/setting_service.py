@@ -102,7 +102,21 @@ def _defs() -> list[SettingDef]:
         SettingDef("reports.time", str, "20:00", "reports"),
         SettingDef("reports.period_days", int, 7, "reports", min_=1, max_=31),
         SettingDef("reports.topic_key", str, "reports", "reports"),
-        SettingDef("reports.private_receiver_ids", object, [], "reports"),
+        # ВАЖНО: в отличие от прочих *_receiver_user_id (см. questions.* выше),
+        # здесь хранятся СЫРЫЕ Telegram chat_id, а не users.id. Получатели —
+        # внешние адресаты отчёта, необязательно зарегистрированные в боте
+        # пользователи, поэтому резолва через UserRepository.get_by_id() нет
+        # и не должно появиться (осознанное решение, подтверждено владельцем
+        # продукта в ревью Task 21).
+        SettingDef(
+            "reports.private_receiver_ids", object, [], "reports",
+            description=(
+                "Список СЫРЫХ Telegram chat_id для отправки отчёта внешним "
+                "получателям (не users.id!) — в отличие от других "
+                "*_receiver_user_id настроек, эти получатели не обязаны быть "
+                "зарегистрированными пользователями бота."
+            ),
+        ),
         SettingDef("reports.show_overdue", bool, True, "reports"),
         SettingDef("reports.show_auto_approved", bool, True, "reports"),
         SettingDef("reports.show_problem_articles", bool, True, "reports"),
