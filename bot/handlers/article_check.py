@@ -51,10 +51,16 @@ async def handle_start_check(callback: CallbackQuery, callback_data: TaskCb, ses
 
 @router.callback_query(ChkCb.filter(F.a == "open"))
 async def handle_open_item(callback: CallbackQuery, callback_data: ChkCb, session):
+    actor = await UserService(session).get_actor(callback.from_user.id)
     svc = ArticleCheckService(session, callback.bot)
     item = await svc.repo.get_item(callback_data.it)
     if item is None or item.check_session_id != callback_data.s:
         await callback.answer("Артикул не найден", show_alert=True)   # поддельный ID
+        return
+    from bot.database.models import ArticleCheckSession
+    chk_session = await session.get(ArticleCheckSession, item.check_session_id)
+    if actor is None or chk_session is None or chk_session.responsible_user_id != actor.id:
+        await callback.answer("Недостаточно прав", show_alert=True)
         return
     from bot.utils.html_utils import html_escape
     text = (f"Артикул: <code>{html_escape(item.article_snapshot)}</code>\n"
@@ -68,6 +74,9 @@ async def handle_open_item(callback: CallbackQuery, callback_data: ChkCb, sessio
 @router.callback_query(ChkCb.filter(F.a == "mark"))
 async def handle_mark(callback: CallbackQuery, callback_data: ChkCb, session):
     actor = await UserService(session).get_actor(callback.from_user.id)
+    if actor is None:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
     svc = ArticleCheckService(session, callback.bot)
     try:
         ok = await svc.mark(callback_data.it, callback_data.v,
@@ -87,10 +96,10 @@ async def handle_mark(callback: CallbackQuery, callback_data: ChkCb, session):
         from bot.handlers.article_check import start_action_fsm
         await start_action_fsm(callback, callback_data.it, session)
         return
-    s = await svc.session.get(
-        __import__("bot.database.models", fromlist=["ArticleCheckSession"]).ArticleCheckSession,
-        callback_data.s)
-    await _render(callback, svc, SettingService(session), callback_data.s, s.current_batch)
+    from bot.database.models import ArticleCheckSession
+    item = await svc.repo.get_item(callback_data.it)
+    s = await svc.session.get(ArticleCheckSession, item.check_session_id)
+    await _render(callback, svc, SettingService(session), item.check_session_id, s.current_batch)
     await session.commit()
     await callback.answer()
 
@@ -105,8 +114,16 @@ async def handle_nav(callback: CallbackQuery, callback_data: ChkCb, session):
     if s is None or actor is None:
         await callback.answer("Недоступно", show_alert=True)
         return
+    if s.responsible_user_id != actor.id:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
     batch = callback_data.b or s.current_batch
     if callback_data.b:
+        if batch < s.current_batch and not bool(
+                await settings.get("article_check.allow_prev_batch")):
+            await callback.answer(
+                "Переход к предыдущей пачке запрещён настройкой", show_alert=True)
+            return
         await svc.repo.set_current_batch(s.id, batch)
     await _render(callback, svc, settings, s.id, batch)
     await session.commit()
@@ -115,7 +132,13 @@ async def handle_nav(callback: CallbackQuery, callback_data: ChkCb, session):
 
 @router.callback_query(ChkCb.filter(F.a == "fin"))
 async def handle_finish_batch(callback: CallbackQuery, callback_data: ChkCb, session):
+    actor = await UserService(session).get_actor(callback.from_user.id)
     svc = ArticleCheckService(session, callback.bot)
+    from bot.database.models import ArticleCheckSession
+    s = await session.get(ArticleCheckSession, callback_data.s)
+    if s is None or actor is None or s.responsible_user_id != actor.id:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
     if not await svc.can_finish_batch(callback_data.s, callback_data.b):
         await callback.answer("В пачке остались непроверенные артикулы", show_alert=True)
         return
