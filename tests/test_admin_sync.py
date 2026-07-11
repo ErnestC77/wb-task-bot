@@ -300,6 +300,47 @@ async def test_syn_value_message_rejects_actor_without_permission(session):
     assert state.state is None
 
 
+async def test_edit_interval_minutes_via_generic_editor_rebuilds_job_with_fresh_value(
+        session_factory):
+    """Regression (найдено ревью Task 33): apply_setting_input (settings.py,
+    переиспользуется здесь) вызывала register_sync_job() ДО коммита нового
+    значения — job пересобирался бы по СТАРОМУ interval_minutes. Правило
+    Task 27/28. Реальный SchedulerService (не AsyncMock) нужен, чтобы
+    проверить, что job реально видит СВЕЖЕЕ значение, а не просто что он
+    существует."""
+    from bot.handlers.admin.sync import handle_syn_value_message
+    from bot.states.admin_states import AdminStates
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from bot.services.scheduler_service import SchedulerService
+
+    async with session_factory() as s:
+        owner = await UserRepository(s).upsert(telegram_id=1, name="O", role=Role.OWNER)
+        await SettingService(s).set("sync.auto_enabled", True, owner.id)
+        await s.commit()
+        owner_id = owner.id
+
+    scheduler = AsyncIOScheduler()
+    scheduler.wb_service = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await scheduler.wb_service.register_sync_job()
+    assert scheduler.get_job("auto_sync").trigger.interval.total_seconds() == 60 * 60  # default
+
+    class FakeDispatcher:
+        workflow_data = {"scheduler": scheduler}
+
+    async with session_factory() as s:
+        owner = await UserRepository(s).get_by_id(owner_id)
+        state = FakeState()
+        await state.set_state(AdminStates.waiting_syn_value)
+        await state.update_data(setting_key="sync.interval_minutes", idx=0)
+
+        message = AsyncMock()
+        message.from_user.id = owner.telegram_id
+        message.text = "5"
+        await handle_syn_value_message(message, s, state, dispatcher=FakeDispatcher())
+
+    assert scheduler.get_job("auto_sync").trigger.interval.total_seconds() == 5 * 60
+
+
 # ---------------------------------------------------------------------------
 # Regression (Task 28/30/31/32 lesson): навигация обязана сбрасывать FSM.
 # ---------------------------------------------------------------------------

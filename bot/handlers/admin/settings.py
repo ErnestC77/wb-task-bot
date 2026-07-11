@@ -99,6 +99,18 @@ async def apply_setting_input(session, actor, key: str, raw: str,
     except (ValueError, KeyError, PermissionError) as exc:
         return False, str(exc)
     if key in SCHEDULER_AFFECTING and scheduler_svc is not None:
+        # Коммит ДО пересборки job'а: register_report_job/register_sync_job
+        # открывают СОБСТВЕННУЮ сессию через session_factory (Task 12) и на
+        # Postgres не увидели бы только что записанное, но ещё не
+        # закоммиченное значение — пересобрали бы job по старому значению.
+        # Тот же класс бага, что и Critical-фикс Task 27, устранённый так же
+        # в apply_schedule_field (Task 28, schedules.py) и в toggle_auto_sync
+        # (Task 33, sync.py) — здесь этот путь дополнительно переиспользуют
+        # reports.py (Task 32) и sync.py (Task 33) для reports.weekday/
+        # reports.time/sync.auto_enabled/sync.interval_minutes, так что фикс
+        # нужен именно в общей функции, а не в каждом вызывающем коде отдельно
+        # (найдено ревью Task 33).
+        await session.commit()
         if key.startswith("reports."):
             await scheduler_svc.register_report_job()
         else:
