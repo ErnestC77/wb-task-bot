@@ -62,16 +62,16 @@ async def test_dangerous_operation_requires_confirm(session):  # тесты 8, 2
     svc = AdminService(session)
     executed = []
 
-    async def op():
+    async def op(session):
         executed.append(1)
 
     token = svc.confirm_token("test.op", op, required_permission="settings.manage",
                               creator_actor_id=owner.id)
     assert executed == []                                      # без подтверждения — нет
-    await svc.execute_confirmed(token)
+    await svc.execute_confirmed(token, session)
     assert executed == [1]
     # повторное подтверждение того же токена идемпотентно (токен одноразовый)
-    await svc.execute_confirmed(token)
+    await svc.execute_confirmed(token, session)
     assert executed == [1]
 
 
@@ -94,7 +94,7 @@ async def test_handle_confirm_rejects_registered_user_without_required_permissio
     svc = AdminService(session)
     executed = []
 
-    async def dangerous_op():
+    async def dangerous_op(session):
         executed.append("wiped")
 
     token = svc.confirm_token("danger.op", dangerous_op,
@@ -131,7 +131,7 @@ async def test_handle_confirm_allows_different_user_with_same_permission(session
     svc = AdminService(session)
     executed = []
 
-    async def op():
+    async def op(session):
         executed.append(1)
 
     token = svc.confirm_token("test.op", op, required_permission="settings.manage",
@@ -152,7 +152,7 @@ async def test_handle_confirm_cancel_discards_token(session):
     svc = AdminService(session)
     executed = []
 
-    async def op():
+    async def op(session):
         executed.append(1)
 
     token = svc.confirm_token("test.op", op, required_permission="settings.manage",
@@ -175,7 +175,7 @@ async def test_confirm_token_expires_after_ttl(session):
     svc = AdminService(session)
     executed = []
 
-    async def op():
+    async def op(session):
         executed.append(1)
 
     token = svc.confirm_token("test.op", op, required_permission="settings.manage",
@@ -184,7 +184,7 @@ async def test_confirm_token_expires_after_ttl(session):
     entry.created_at -= admin_service_module.CONFIRM_TTL_SECONDS + 1
     assert svc.is_expired(entry)
 
-    ok = await svc.execute_confirmed(token)
+    ok = await svc.execute_confirmed(token, session)
     assert ok is False
     assert executed == []
 
@@ -200,7 +200,7 @@ async def test_handle_confirm_rejects_expired_token(session):
     svc = AdminService(session)
     executed = []
 
-    async def op():
+    async def op(session):
         executed.append(1)
 
     token = svc.confirm_token("test.op", op, required_permission="settings.manage",

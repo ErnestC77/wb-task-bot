@@ -124,7 +124,7 @@ async def test_reset_goes_through_confirm_token_with_settings_manage(session):
     assert entry.required_permission == "settings.manage"
     assert entry.creator_actor_id == owner.id
 
-    await svc.execute_confirmed(confirm_cb.t)
+    await svc.execute_confirmed(confirm_cb.t, session)
     assert await SettingService(session).get("approval.timeout_hours") == 24  # default
 
 

@@ -316,7 +316,14 @@ async def _toggle_active(callback: CallbackQuery, session, actor: User,
         await callback.answer("Активирована ✅")
         return
 
-    async def op() -> None:
+    async def op(session) -> None:
+        # `session` — параметр (сессия ПОДТВЕРЖДАЮЩЕГО запроса), НЕ внешняя
+        # переменная того же имени из _toggle_active — см. docstring
+        # AdminService.confirm_token (Task 27 review fix, Critical).
+        # `topic.topic_key` ниже — уже загруженный (не lazy) скаляр на объекте
+        # из внешней сессии; безопасен даже после её закрытия, т.к.
+        # async_session_factory сконфигурирована с expire_on_commit=False
+        # (bot/database/db.py) — коммит НЕ инвалидирует уже прочитанные поля.
         t = await TopicRepository(session).get_by_id(topic_id)
         if t is not None:
             t.is_active = False

@@ -427,9 +427,12 @@ async def _start_edit_field(callback: CallbackQuery, session, state: FSMContext 
     if field in BOOL_FIELDS:
         old = getattr(cfg, field)
         ok, msg = await apply_field_edit(session, actor, config_id, field, not old)
+        await session.commit()             # коммит ДО rebuild — иначе rebuild_config_job
+                                            # (своя сессия/соединение, см. SchedulerService)
+                                            # может не увидеть ещё не закоммиченное поле —
+                                            # тот же порядок, что и в _toggle_active выше.
         if ok and field in SCHEDULE_AFFECTING_FIELDS and scheduler_svc is not None:
             await scheduler_svc.rebuild_config_job(config_id)
-        await session.commit()
         await _show_fields(callback, session, config_id, 1)
         return
     if state is None:
@@ -465,11 +468,14 @@ async def handle_cfg_edit_message(message: Message, session, state: FSMContext,
         await message.answer(str(exc))
         return
     ok, msg = await apply_field_edit(session, actor, config_id, field, value)
+    await session.commit()                 # коммит ДО rebuild — иначе rebuild_config_job
+                                            # (своя сессия/соединение, см. SchedulerService)
+                                            # может не увидеть ещё не закоммиченное поле —
+                                            # тот же порядок, что и в _toggle_active выше.
     if ok and field in SCHEDULE_AFFECTING_FIELDS:
         scheduler_svc = _extract_scheduler_svc(dispatcher)
         if scheduler_svc is not None:
             await scheduler_svc.rebuild_config_job(config_id)
-    await session.commit()
     await message.answer(msg)
     if ok:
         await state.clear()
@@ -503,13 +509,21 @@ async def _toggle_active(callback: CallbackQuery, session, actor: User, svc: Adm
         await callback.answer("Активирован ✅")
         return
 
-    async def op() -> None:
+    async def op(session) -> None:
+        # `session` — параметр (сессия ПОДТВЕРЖДАЮЩЕГО запроса), НЕ внешняя
+        # переменная того же имени из _toggle_active — см. docstring
+        # AdminService.confirm_token (Task 27 review fix, Critical).
         c = await TaskRepository(session).get_config(config_id)
         if c is not None:
             c.is_active = False
             await session.flush()
         await AuditService(session).log(actor.id, "task_config.deactivate",
                                         entity_type="task_config", entity_id=str(config_id))
+        await session.commit()            # коммит ДО rebuild — rebuild_config_job открывает
+                                           # СВОЮ сессию (scheduler_svc.session_factory) и не
+                                           # увидит незакоммиченный is_active=False; handle_confirm
+                                           # закоммитит эту же сессию ещё раз следом — no-op
+                                           # (см. _toggle_active активации выше — тот же паттерн).
         if scheduler_svc is not None:
             await scheduler_svc.rebuild_config_job(config_id)
 
@@ -550,7 +564,10 @@ async def _start_manual_run(callback: CallbackQuery, session, actor: User, svc: 
         await callback.answer("Шаблон не найден", show_alert=True)
         return
 
-    async def op() -> None:
+    async def op(session) -> None:
+        # `session` — параметр (сессия ПОДТВЕРЖДАЮЩЕГО запроса), НЕ внешняя
+        # переменная того же имени из _start_manual_run — см. docstring
+        # AdminService.confirm_token (Task 27 review fix, Critical).
         await manual_run_config(session, callback.bot, scheduler_svc, actor, config_id)
 
     token = svc.confirm_token(f"task_config.manual_run.{config_id}", op,

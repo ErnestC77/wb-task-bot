@@ -200,7 +200,7 @@ async def test_deactivate_topic_goes_through_confirm_token_not_immediate(session
     assert entry is not None
     assert entry.required_permission == "topics.manage"
 
-    await svc.execute_confirmed(confirm_cb.t)
+    await svc.execute_confirmed(confirm_cb.t, session)
     reloaded = await TopicRepository(session).get_by_id(topic.id)
     assert reloaded.is_active is False
 

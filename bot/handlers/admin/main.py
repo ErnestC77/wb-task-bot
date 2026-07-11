@@ -103,7 +103,11 @@ async def handle_confirm(callback: CallbackQuery, callback_data: ConfirmCb, sess
     if not await svc.permissions.has_permission(actor, entry.required_permission):
         await callback.answer("Недостаточно прав", show_alert=True)
         return
-    done = await svc.execute_confirmed(callback_data.t)
+    # `session` здесь — сессия ТЕКУЩЕГО апдейта (подтверждения), выданная
+    # DbSessionMiddleware; передаём её явно в execute_confirmed, чтобы op()
+    # работал именно с ней, а не с сессией запроса-инициатора, которая к этому
+    # моменту уже закрыта (Task 27 review fix, Critical).
+    done = await svc.execute_confirmed(callback_data.t, session)
     await session.commit()
     await callback.message.edit_text("Выполнено ✅" if done else "Операция уже выполнена")
     await callback.answer()

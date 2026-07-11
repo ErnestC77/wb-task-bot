@@ -390,7 +390,10 @@ async def _toggle_active(callback: CallbackQuery, session, actor: User,
         await callback.answer("Активирован ✅")
         return
 
-    async def op() -> None:
+    async def op(session) -> None:
+        # `session` — параметр (сессия ПОДТВЕРЖДАЮЩЕГО запроса), НЕ внешняя
+        # переменная того же имени из _toggle_active — см. docstring
+        # AdminService.confirm_token (Task 27 review fix, Critical).
         await UserRepository(session).deactivate(user_id)
         await AuditService(session).log(actor.id, "user.deactivate", entity_type="user",
                                         entity_id=str(user_id))
@@ -454,7 +457,10 @@ async def _toggle_permission(callback: CallbackQuery, session, actor: User,
         except LastOwnerPermissionError:
             # Owner снимает право с самого себя — отдельный confirm_token,
             # отличный от обычного мгновенного toggle (требование брифа).
-            async def op() -> None:
+            async def op(session) -> None:
+                # `session` — параметр (сессия ПОДТВЕРЖДАЮЩЕГО запроса), НЕ
+                # внешняя переменная — см. docstring AdminService.confirm_token
+                # (Task 27 review fix, Critical).
                 await PermissionService(session).revoke(actor, user_id, key, force=True)
 
             token = svc.confirm_token(

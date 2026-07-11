@@ -262,7 +262,7 @@ async def test_deactivate_goes_through_confirm_token_not_immediate(session):
     assert entry is not None
     assert entry.required_permission == "users.manage"
 
-    await svc.execute_confirmed(confirm_cb.t)
+    await svc.execute_confirmed(confirm_cb.t, session)
     reloaded = await UserRepository(session).get_by_id(target.id)
     assert reloaded.is_active is False                      # деактивирован, не удалён
     assert (await UserRepository(session).get_by_id(target.id)) is not None  # запись жива
@@ -314,7 +314,7 @@ async def test_owner_self_revoke_requires_confirm_token(session):
     entry = svc.get_pending(confirm_cb.t)
     assert entry is not None and entry.required_permission == "users.manage"
 
-    await svc.execute_confirmed(confirm_cb.t)
+    await svc.execute_confirmed(confirm_cb.t, session)
     assert await PermissionService(session).has_permission(owner, "settings.manage") is False
 
 

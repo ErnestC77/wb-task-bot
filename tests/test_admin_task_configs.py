@@ -285,10 +285,76 @@ async def test_deactivate_goes_through_confirm_token_and_rebuilds_job(session):
     assert entry is not None
     assert entry.required_permission == "tasks.manage"
 
-    await svc.execute_confirmed(confirm_cb.t)
+    await svc.execute_confirmed(confirm_cb.t, session)
     reloaded = await TaskRepository(session).get_config(cfg.id)
     assert reloaded.is_active is False
     scheduler_svc.rebuild_config_job.assert_awaited_once_with(cfg.id)   # job снят/пересобран
+
+
+# ---------------------------------------------------------------------------
+# Task 27 review fix (Critical): confirm_token/execute_confirmed раньше
+# захватывали `session` из ЗАМЫКАНИЯ — сессию запроса-инициатора (первый
+# апдейт, когда нажали «Деактивировать»). Реальное подтверждение («✅
+# Подтвердить») приходит ДРУГИМ Telegram-апдейтом, с ДРУГОЙ AsyncSession,
+# выданной DbSessionMiddleware (bot/loader.py), — сессия первого запроса к
+# этому моменту уже закрыта. Фикстура `session`, которую переиспользует
+# остальной файл (один и тот же объект AsyncSession на весь тест, StaticPool),
+# ЭТУ неизолированность не воспроизводит — поэтому здесь намеренно подняты
+# ТРИ НЕЗАВИСИМЫЕ AsyncSession через `session_factory` (без общей фикстуры
+# `session`), по одной на «запрос»: 1) инициатор жмёт «Деактивировать» и
+# получает токен; 2) ДРУГОЙ апдейт с ДРУГОЙ сессией подтверждает; 3) ещё одна,
+# независимая сессия проверяет, что изменения РЕАЛЬНО закоммичены и видны, а
+# не потеряны на подвисшей закрытой сессии первого запроса.
+# ---------------------------------------------------------------------------
+
+async def test_confirm_token_survives_across_independent_sessions(session_factory):
+    from sqlalchemy import select
+
+    from bot.database.models import AdminAuditLog
+    from bot.handlers.admin.task_configs import _toggle_active
+    from bot.keyboards.admin.confirm import ConfirmCb
+    from bot.services.admin_service import AdminService
+
+    # --- "Запрос 1": инициатор жмёт «Деактивировать» ---
+    async with session_factory() as session1:
+        owner = await _owner(session1)
+        cfg, valya = await make_config(session1)   # is_active=True
+        await session1.commit()
+        config_id = cfg.id
+        owner_id = owner.id
+
+        svc1 = AdminService(session1)
+        scheduler_svc = AsyncMock()
+        callback = AsyncMock()
+        await _toggle_active(callback, session1, owner, svc1, scheduler_svc, config_id)
+
+        reply_markup = _reply_markup(callback)
+        token = reply_markup.inline_keyboard[0][0].callback_data
+        confirm_cb = ConfirmCb.unpack(token)
+    # session1 закрыта здесь (async with вышел из области видимости) — ровно
+    # как DbSessionMiddleware закрывает сессию по завершении обработки апдейта.
+
+    # --- "Запрос 2": ДРУГОЙ апдейт, ДРУГАЯ (свежая) сессия подтверждает ---
+    async with session_factory() as session2:
+        svc2 = AdminService(session2)
+        entry = svc2.get_pending(confirm_cb.t)
+        assert entry is not None                   # токен пережил закрытие session1
+        done = await svc2.execute_confirmed(confirm_cb.t, session2)
+        await session2.commit()                     # ровно как handle_confirm в main.py
+        assert done is True
+
+    # --- "Запрос 3": ТРЕТЬЯ, независимая сессия — реальная проверка ---
+    async with session_factory() as session3:
+        reloaded = await TaskRepository(session3).get_config(config_id)
+        assert reloaded is not None
+        assert reloaded.is_active is False           # деактивация реально закоммичена и видна
+        logs = list(await session3.scalars(
+            select(AdminAuditLog).where(AdminAuditLog.action == "task_config.deactivate")))
+        assert len(logs) == 1                        # аудит-лог тоже реально закоммичен
+        assert logs[0].actor_user_id == owner_id
+        assert logs[0].entity_id == str(config_id)
+
+    scheduler_svc.rebuild_config_job.assert_awaited_once_with(config_id)
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +529,7 @@ async def test_manual_run_button_goes_through_confirm_token(session):
     before = list(await session.scalars(select(TaskInstance)))
     assert before == []       # ничего не создано до подтверждения
 
-    await svc.execute_confirmed(confirm_cb.t)
+    await svc.execute_confirmed(confirm_cb.t, session)
     after = list(await session.scalars(select(TaskInstance)))
     assert len(after) == 1    # создано только после подтверждения
 

@@ -23,7 +23,18 @@ CONFIRM_TTL_SECONDS = 15 * 60
 
 @dataclass
 class _PendingConfirm:
-    op: Callable[[], Awaitable[None]]
+    # Task 27 review fix (Critical): `op` больше НЕ замыкание без параметров,
+    # захватывающее `session` из запроса-инициатора — та сессия закрывается
+    # `DbSessionMiddleware` (bot/loader.py) до того, как приходит подтверждение
+    # (это ДРУГОЙ Telegram-апдейт, с ДРУГОЙ AsyncSession). `op` теперь ПРИНИМАЕТ
+    # сессию параметром и обязана использовать ИМЕННО её для всех операций с БД
+    # (флаши/запросы через репозитории/commit) — эту сессию `execute_confirmed`
+    # получает от `handle_confirm`, т.е. из ТЕКУЩЕГО (подтверждающего) запроса.
+    # На реальном Postgres захват чужой сессии приводил к тому, что мутации
+    # op() открывали НЕЗАКОММИЧЕННУЮ транзакцию на уже закрытой сессии, а
+    # commit() в handle_confirm коммитил ДРУГУЮ (свежую, без изменений) сессию —
+    # изменения тихо терялись, плюс утечка соединения в пуле.
+    op: Callable[[AsyncSession], Awaitable[None]]
     required_permission: str   # право, необходимое для ВЫПОЛНЕНИЯ операции за токеном
     creator_actor_id: int      # кто инициировал (аудит/на будущее; НЕ обязателен
                                 # для подтверждения — см. handle_confirm)
@@ -47,9 +58,16 @@ class AdminService:
                 result.add(section)
         return result
 
-    def confirm_token(self, action: str, op: Callable[[], Awaitable[None]],
+    def confirm_token(self, action: str, op: Callable[[AsyncSession], Awaitable[None]],
                       required_permission: str, creator_actor_id: int) -> str:
         """Регистрирует отложенную опасную операцию.
+
+        `op` ОБЯЗАНА принимать сессию параметром (`op(session)`) и использовать
+        ИМЕННО её для всех операций с БД — НЕ захватывать `session` текущего
+        (инициирующего) запроса через замыкание. `execute_confirmed` вызывает
+        `op(session)` с сессией ТОГО запроса, в котором пришло подтверждение —
+        она гарантированно открыта и валидна (см. docstring `_PendingConfirm.op`
+        и `execute_confirmed` ниже — Task 27 review fix, Critical).
 
         `required_permission` ОБЯЗАН быть проверен у того, кто подтверждает
         (см. `handle_confirm` в `bot/handlers/admin/main.py`) — до этого фикса
@@ -85,9 +103,14 @@ class AdminService:
     def discard(self, token: str) -> None:
         _pending_confirms.pop(token, None)
 
-    async def execute_confirmed(self, token: str) -> bool:
+    async def execute_confirmed(self, token: str, session: AsyncSession) -> bool:
+        """`session` ОБЯЗАНА быть сессией ТЕКУЩЕГО (подтверждающего) запроса —
+        именно её `handle_confirm` получает от `DbSessionMiddleware` для этого
+        конкретного Telegram-апдейта. Передаётся в `entry.op(session)` вместо
+        того, чтобы `op` захватывала стороннюю сессию через замыкание (Task 27
+        review fix, Critical — см. docstring `_PendingConfirm.op`)."""
         entry = _pending_confirms.pop(token, None)   # одноразовый токен — идемпотентно
         if entry is None or self.is_expired(entry):
             return False
-        await entry.op()
+        await entry.op(session)
         return True

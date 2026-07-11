@@ -190,7 +190,11 @@ async def _start_reset(callback: CallbackQuery, session, actor, svc: AdminServic
     settings_svc = SettingService(session)
     old_value = await settings_svc.get(key)
 
-    async def op() -> None:
+    async def op(session) -> None:
+        # `session` — параметр (сессия ПОДТВЕРЖДАЮЩЕГО запроса), НЕ внешняя
+        # переменная того же имени из _start_reset — см. docstring
+        # AdminService.confirm_token (Task 27 review fix, Critical; этот call
+        # site из Task 24 затронут той же системной проблемой).
         await SettingService(session).reset(key, actor_user_id=actor.id)
 
     token = svc.confirm_token(
