@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from bot.database.models import QuestionStatus
+from bot.database.models import DeliveryStatus, QuestionStatus
 from bot.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -85,11 +85,18 @@ async def recover_jobs(scheduler, bot, session_factory) -> dict[str, int]:
                         [q.id, bot, session_factory], f"question_escalation:{q.id}")
                 counters["questions"] += 1
 
-        # 5) зависшие доставки pending/failed/retrying
+        # 5) зависшие доставки pending/failed/retrying.
+        # PENDING — процесс упал ДО первой попытки отправки: retry_task_delivery
+        # для него no-op (реагирует только на RETRYING), поэтому такие инстансы
+        # планируются на deliver_pending, который реально шлёт сообщение.
         delivery = DeliveryService(session, bot, scheduler)
         for inst in await repo.get_pending_delivery():
-            _add_job(scheduler, delivery.retry_task_delivery, _not_past(inst.next_retry_at),
-                    [inst.id], f"retry_delivery:{inst.id}:recover")
+            if inst.delivery_status == DeliveryStatus.PENDING:
+                _add_job(scheduler, delivery.deliver_pending, _not_past(inst.next_retry_at),
+                        [inst.id], f"deliver_pending:{inst.id}:recover")
+            else:
+                _add_job(scheduler, delivery.retry_task_delivery, _not_past(inst.next_retry_at),
+                        [inst.id], f"retry_delivery:{inst.id}:recover")
             counters["deliveries"] += 1
 
     logger.info("Recovery done: %s", counters)

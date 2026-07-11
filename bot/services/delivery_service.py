@@ -78,6 +78,16 @@ class DeliveryService:
             await self.send_task_message(inst)
             await self.session.commit()
 
+    async def deliver_pending(self, instance_id: int) -> None:
+        """Восстановление доставки, зависшей на статусе PENDING (процесс упал
+        между созданием TaskInstance и первой попыткой отправки). retry_task_delivery
+        для такого инстанса — no-op, т.к. реагирует только на RETRYING, поэтому
+        сообщение отправляется напрямую через send_task_message."""
+        inst = await self.tasks.get_instance(instance_id)
+        if inst is not None and inst.delivery_status == DeliveryStatus.PENDING:
+            await self.send_task_message(inst)
+            await self.session.commit()
+
     async def send_private(self, user_telegram_id: int, text: str,
                            reply_markup=None) -> tuple[bool, str | None]:
         try:
