@@ -21,6 +21,20 @@ class ChkCb(CallbackData, prefix="c"):
     b: int = 0      # batch
 
 
+class ActCb(CallbackData, prefix="a"):
+    a: str          # cat|prob|dec|skip
+    id: int = 0     # id выбранной записи справочника (0 для skip)
+    it: int = 0     # item_id
+
+
+def dict_keyboard(rows, cb_action: str, item_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура из активных записей справочника (id/name) для одного шага FSM."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=row.name,
+                              callback_data=ActCb(a=cb_action, id=row.id, it=item_id).pack())]
+        for row in rows])
+
+
 def render_batch(view, show_names: bool) -> str:
     lines = ["📦 <b>Проверка артикулов</b>", "",
              f"Пачка {view.batch} из {view.total_batches}",
