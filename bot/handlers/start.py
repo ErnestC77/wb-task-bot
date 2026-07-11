@@ -59,6 +59,11 @@ async def cmd_start(message: Message, session) -> None:
 
 @router.message(Command("help"))
 async def cmd_help(message: Message, session) -> None:
+    # Осознанное исключение из мандата «actor-check везде кроме /start»:
+    # /help не мутирует БД и не раскрывает чужие данные, actor здесь нужен
+    # только для персонализации текста (owner/partner приписка ниже).
+    # Незарегистрированный пользователь должен иметь доступ к /help — иначе
+    # он никогда не узнает, что делать/как зарегистрироваться.
     actor = await UserService(session).get_actor(message.from_user.id)
     text = HELP_TEXT
     if actor is not None and actor.role in (Role.OWNER, Role.PARTNER):
@@ -70,5 +75,10 @@ async def cmd_help(message: Message, session) -> None:
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    # Осознанное исключение из мандата «actor-check везде кроме /start»:
+    # aiogram FSMContext ключуется per-chat/per-user (bot_id, chat_id,
+    # user_id), поэтому state.clear() очищает только FSM-состояние самого
+    # вызывающего — чужим состоянием физически нельзя завладеть через эту
+    # команду, проверять нечего.
     await state.clear()
     await message.answer("Действие отменено")
