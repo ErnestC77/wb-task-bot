@@ -16,10 +16,17 @@ callback_data (`routekey` несёт выбранный `map_key` дальше �
 Поля: `id: int = 0` — индекс ключа настройки в отсортированном списке
 `category_keys("questions")` (контекст «список -> карточка -> редактирование»)
 ИЛИ id пользователя (контекст `setrecv`/`routeset`, где `id2` — вторичное целое
-поле). `k: str | None = None` — `map_key` (topic_key/имя категории) для
-маршрутов; НЕ `str = ""` (системный баг Tasks 24-25 — aiogram трактует ЛЮБОЕ
-поле со значением по умолчанию как nullable и подменяет пустую строку на
-`None` при `unpack()`, что pydantic отклоняет для не-Optional `str`).
+поле). `k: str | None = None` — безопасный ТОКЕН выбранной темы/категории для
+маршрутов (topic_key для route_by_topic — не редактируется через админку и
+безопасен как есть; `str(category.id)` для route_by_category — НЕ имя
+категории напрямую, т.к. имя редактируется свободным текстом в Task 30 и
+может содержать `:`, что ломает `.pack()`; см. `route_key_picker_keyboard`).
+Бизнес-ключ (имя категории) резолвится из токена обратно в
+`bot/handlers/admin/questions.py` только на уровне вызова `update_route_map`,
+никогда не кладётся в CallbackData напрямую. НЕ `str = ""` (системный баг
+Tasks 24-25 — aiogram трактует ЛЮБОЕ поле со значением по умолчанию как
+nullable и подменяет пустую строку на `None` при `unpack()`, что pydantic
+отклоняет для не-Optional `str`).
 Целочисленные default-поля (`id`/`id2`/`p`) безопасны без изменений (Task 26).
 Каждая клавиатура покрыта тестом, реально вызывающим `.pack()`/`.unpack()`
 (см. tests/test_admin_questions.py).
@@ -74,20 +81,27 @@ def receiver_picker_keyboard(idx: int, users: list[tuple[int, str]]) -> InlineKe
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def route_key_picker_keyboard(idx: int, options: list[str]) -> InlineKeyboardMarkup:
-    """`options` — topic_key (route_by_topic) или название категории товара
-    (route_by_category), уже отфильтрованные по активности."""
-    rows = [[InlineKeyboardButton(text=opt, callback_data=QstCb(a="routekey", id=idx, k=opt).pack())]
-            for opt in options]
+def route_key_picker_keyboard(idx: int, options: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    """`options` — [(token, label), ...], уже отфильтрованные по активности.
+    Для route_by_topic token == label == topic_key (не редактируется через
+    админку — безопасен как есть). Для route_by_category token —
+    `str(category.id)`, НЕ имя категории: имя редактируется свободным текстом
+    (Task 30) и может содержать `:`, что ломает `QstCb.pack()` (regression,
+    Task 31 review). Бизнес-ключ (имя категории) резолвится из id обратно
+    только на уровне `update_route_map`, не в CallbackData."""
+    rows = [[InlineKeyboardButton(text=label, callback_data=QstCb(a="routekey", id=idx, k=token).pack())]
+            for token, label in options]
     rows.append([InlineKeyboardButton(
         text="⬅ Назад", callback_data=QstCb(a="card", id=idx).pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def route_user_picker_keyboard(idx: int, map_key: str,
+def route_user_picker_keyboard(idx: int, token: str,
                                users: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """`token` — тот же безопасный токен, что был выбран на шаге `routekey`
+    (topic_key либо `str(category.id)`), переносится дальше в `routeset`."""
     rows = [[InlineKeyboardButton(
-        text=name, callback_data=QstCb(a="routeset", id=idx, k=map_key, id2=uid).pack())]
+        text=name, callback_data=QstCb(a="routeset", id=idx, k=token, id2=uid).pack())]
         for uid, name in users]
     rows.append([InlineKeyboardButton(
         text="⬅ Назад", callback_data=QstCb(a="card", id=idx).pack())])

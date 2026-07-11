@@ -311,6 +311,78 @@ async def test_routeset_rejects_non_route_key(session):
     callback.answer.assert_awaited_with("Недопустимый ключ маршрута", show_alert=True)
 
 
+async def test_edit_route_by_category_alerts_when_no_active_categories(session):
+    from bot.handlers.admin.questions import handle_qst_callback
+    from bot.keyboards.admin.questions import QstCb
+
+    owner = await _owner(session)
+    await session.commit()
+
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    # index 6 = questions.route_by_category, нет ни одной категории
+    await handle_qst_callback(callback, QstCb(a="edit", id=6), session, state=FakeState())
+    callback.answer.assert_awaited_with("Нет доступных вариантов для маршрута", show_alert=True)
+
+
+async def test_routeset_rejects_stale_token(session):
+    """Regression: если тему/категорию удалили/деактивировали между показом
+    списка и кликом, токен резолвится в None — не должен молча записаться
+    как бизнес-ключ маршрута."""
+    from bot.handlers.admin.questions import handle_qst_callback
+    from bot.keyboards.admin.questions import QstCb
+
+    owner = await _owner(session)
+    target = await UserRepository(session).upsert(telegram_id=12, name="R3", role=Role.PARTNER)
+    target.private_chat_available = True
+    await session.commit()
+
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    # index 7 = route_by_topic, "ghost" не существует ни в одной теме
+    await handle_qst_callback(
+        callback, QstCb(a="routeset", id=7, k="ghost", id2=target.id), session, state=FakeState())
+    callback.answer.assert_awaited_with("Тема/категория больше недоступна", show_alert=True)
+    assert await SettingService(session).get("questions.route_by_topic") == {}
+
+
+async def test_route_by_category_flow_handles_colon_in_category_name(session):
+    """Regression (review finding): имя категории редактируется свободным
+    текстом в Task 30 и может содержать ':', что раньше ломало QstCb.pack()
+    (aiogram резервирует ':' как разделитель полей). Теперь в CallbackData
+    передаётся id категории, а не имя, поэтому маршрут по категории с ':' в
+    имени должен работать сквозным потоком routekey -> routeset."""
+    from bot.handlers.admin.questions import handle_qst_callback
+    from bot.keyboards.admin.questions import QstCb
+
+    owner = await _owner(session)
+    target = await UserRepository(session).upsert(telegram_id=13, name="R4", role=Role.PARTNER)
+    target.private_chat_available = True
+    cat = ArticleCategory(name="Опт: розница", sort_order=0, is_active=True)
+    session.add(cat)
+    await session.commit()
+
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    # index 6 = questions.route_by_category
+    await handle_qst_callback(callback, QstCb(a="edit", id=6), session, state=FakeState())
+    kb = _reply_markup(callback)
+    labels = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert "Опт: розница" in labels
+    token = QstCb.unpack(kb.inline_keyboard[0][0].callback_data).k
+    assert token == str(cat.id)
+
+    await handle_qst_callback(
+        callback, QstCb(a="routekey", id=6, k=token), session, state=FakeState())
+    text = callback.message.edit_text.await_args.args[0]
+    assert "Опт: розница" in text
+
+    await handle_qst_callback(
+        callback, QstCb(a="routeset", id=6, k=token, id2=target.id), session, state=FakeState())
+    assert await SettingService(session).get("questions.route_by_category") == {
+        "Опт: розница": target.id}
+
+
 # ---------------------------------------------------------------------------
 # Обычный текстовый FSM-ввод (escalation_hours и т.п.)
 # ---------------------------------------------------------------------------
@@ -458,10 +530,12 @@ def test_receiver_picker_keyboard_roundtrip():
 def test_route_key_picker_keyboard_roundtrip():
     from bot.keyboards.admin.questions import QstCb, route_key_picker_keyboard
 
-    kb = route_key_picker_keyboard(7, ["goods", "logistics"])
+    kb = route_key_picker_keyboard(7, [("goods", "goods"), ("42", "Тест: категория")])
     for row in kb.inline_keyboard[:2]:
         cb = QstCb.unpack(row[0].callback_data)
         assert cb.a == "routekey" and cb.id == 7
+    # regression: токен категории — id, а не имя (которое может содержать ":")
+    assert QstCb.unpack(kb.inline_keyboard[1][0].callback_data).k == "42"
 
 
 def test_route_user_picker_keyboard_roundtrip():

@@ -29,7 +29,9 @@ FSM-продолжение сообщением заново проверяет 
 Буквальный код брифа упал бы `TypeError` при первом же вызове. Исправлено на
 `new_value=current`.
 """
-from bot.database.models import ArticleCategory, Topic, User
+import json
+
+from bot.database.models import ArticleCategory, User
 from bot.database.repositories.topic_repository import TopicRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.handlers.admin.settings import (
@@ -140,7 +142,7 @@ async def _show_list(callback: CallbackQuery, session, page: int) -> None:
     for offset, key in enumerate(keys[start:start + page_size]):
         idx = start + offset
         value = await settings_svc.get(key)
-        entries.append((idx, f"{key} = {value}"[:60]))
+        entries.append((idx, f"{key} = {json.dumps(value, ensure_ascii=False)}"[:60]))
     await callback.message.edit_text(
         "❓ Маршрутизация вопросов", reply_markup=questions_list_keyboard(entries, page, total_pages))
     await callback.answer()
@@ -181,11 +183,12 @@ async def _start_edit(callback: CallbackQuery, session, state: FSMContext | None
 
     if key in ROUTE_SETTING_KEYS:
         if key == "questions.route_by_topic":
-            options = [t.topic_key for t in await TopicRepository(session).get_all(include_inactive=False)]
+            options = [(t.topic_key, t.topic_key)
+                      for t in await TopicRepository(session).get_all(include_inactive=False)]
         else:
             cats = list(await session.scalars(
                 select(ArticleCategory).where(ArticleCategory.is_active.is_(True))))
-            options = [c.name for c in cats]
+            options = [(str(c.id), c.name) for c in cats]
         if not options:
             await callback.answer("Нет доступных вариантов для маршрута", show_alert=True)
             return
@@ -243,18 +246,44 @@ async def _pick_receiver(callback: CallbackQuery, session, actor: User, idx: int
     await _show_card(callback, session, idx)
 
 
-async def _pick_route_key(callback: CallbackQuery, session, idx: int, map_key: str) -> None:
+async def _resolve_route_business_key(session, key: str, token: str) -> str | None:
+    """Резолвит транспортный token из QstCb.k в реальный бизнес-ключ карты
+    маршрутов (значение, которое реально кладётся в JSON questions.route_by_*).
+    Для route_by_topic token уже и есть business-ключ (topic_key). Для
+    route_by_category token — `str(category.id)`, безопасный суррогат имени
+    (см. docstring `route_key_picker_keyboard`) — здесь резолвится обратно в
+    имя. Возвращает None, если token стал невалиден между показом списка и
+    кликом (тема/категория удалена или деактивирована)."""
+    if key == "questions.route_by_topic":
+        topic = await TopicRepository(session).get_by_key(token)
+        return topic.topic_key if topic is not None and topic.is_active else None
+    if not token.isdigit():
+        return None
+    cat = await session.get(ArticleCategory, int(token))
+    return cat.name if cat is not None and cat.is_active else None
+
+
+async def _pick_route_key(callback: CallbackQuery, session, idx: int, token: str) -> None:
+    try:
+        key = key_by_index("questions", idx)
+    except KeyError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    label = await _resolve_route_business_key(session, key, token)
+    if label is None:
+        await callback.answer("Тема/категория больше недоступна", show_alert=True)
+        return
     users = await _active_private_users(session)
     if not users:
         await callback.answer("Нет активных пользователей с открытой личкой (/start)", show_alert=True)
         return
     await callback.message.edit_text(
-        f"Получатель для «{map_key}»:", reply_markup=route_user_picker_keyboard(idx, map_key, users))
+        f"Получатель для «{label}»:", reply_markup=route_user_picker_keyboard(idx, token, users))
     await callback.answer()
 
 
 async def _pick_route_user(callback: CallbackQuery, session, actor: User, idx: int,
-                           map_key: str, user_id: int) -> None:
+                           token: str, user_id: int) -> None:
     try:
         key = key_by_index("questions", idx)
     except KeyError as exc:
@@ -262,6 +291,10 @@ async def _pick_route_user(callback: CallbackQuery, session, actor: User, idx: i
         return
     if key not in ROUTE_SETTING_KEYS:
         await callback.answer("Недопустимый ключ маршрута", show_alert=True)
+        return
+    map_key = await _resolve_route_business_key(session, key, token)
+    if map_key is None:
+        await callback.answer("Тема/категория больше недоступна", show_alert=True)
         return
     user = await UserRepository(session).get_by_id(user_id)
     if user is None or not user.is_active or not user.private_chat_available:
