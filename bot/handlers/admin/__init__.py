@@ -78,3 +78,9 @@ from bot.handlers.admin import operations as _operations  # noqa: E402
 admin_router.include_router(_operations.router)
 SECTION_HANDLERS["run"] = _operations.handle_operations_section
 SECTION_HANDLERS["act"] = _operations.handle_operations_section
+
+from bot.handlers.admin import audit as _audit  # noqa: E402
+
+admin_router.include_router(_audit.router)
+SECTION_HANDLERS["aud"] = _audit.handle_audit_section
+SECTION_HANDLERS["bak"] = _audit.handle_backup_section
