@@ -57,3 +57,8 @@ from bot.handlers.admin import dictionaries as _dictionaries  # noqa: E402
 admin_router.include_router(_dictionaries.router)
 SECTION_HANDLERS["dic"] = _dictionaries.handle_dictionaries_section
 SECTION_HANDLERS["dic2"] = _dictionaries.handle_dictionaries_section
+
+from bot.handlers.admin import questions as _questions  # noqa: E402
+
+admin_router.include_router(_questions.router)
+SECTION_HANDLERS["qst"] = _questions.handle_questions_section

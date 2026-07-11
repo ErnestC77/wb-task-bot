@@ -54,3 +54,11 @@ class AdminStates(StatesGroup):
     # kind="article_categories", у которого нет этих полей).
     waiting_dic_rename = State()
     waiting_dic_add = State()
+
+    # Task 31 — раздел «❓ Маршрутизация вопросов»: текстовый ввод для «простых»
+    # настроек категории questions (escalation_hours/notify_asker_on_answer/
+    # allow_complete_with_open_questions). ОТДЕЛЬНОЕ состояние, а не переиспользование
+    # waiting_value из Task 24 — у "questions" своё право (questions.manage), не
+    # settings.manage, а handle_value_message (settings.py) жёстко проверяет
+    # именно settings.manage; общее состояние увело бы апдейт не в тот handler.
+    waiting_qst_value = State()
