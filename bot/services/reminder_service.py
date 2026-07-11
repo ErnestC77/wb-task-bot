@@ -17,7 +17,7 @@ from bot.utils.validation import validate_time_str
 logger = get_logger(__name__)
 
 
-async def reminder_job(instance_id: int, number: int, bot, session_factory) -> None:
+async def reminder_job(instance_id: int, number: int, bot, session_factory, scheduler) -> None:
     async with session_factory() as session:
         repo = TaskRepository(session)
         settings = SettingService(session)
@@ -37,16 +37,20 @@ async def reminder_job(instance_id: int, number: int, bot, session_factory) -> N
         end = validate_time_str(str(await settings.get("reminders.quiet_hours_end")))
         if is_quiet_hours(now, start, end):
             if bool(await settings.get("reminders.shift_night_to_morning")):
-                # Настоящую пересборку job'а в APScheduler здесь не сделать:
-                # reminder_job получает только (instance_id, number, bot,
-                # session_factory) — без ссылки на scheduler (сигнатура
-                # зафиксирована в Task 12, SchedulerService.register_instance_jobs,
-                # и переиспользуется в scheduler_recovery_service — Task 13).
-                # Поэтому ночью просто не отправляем и фиксируем в логе, во
-                # сколько напоминание было бы уместно; reminders_sent не
-                # увеличиваем, чтобы напоминание не считалось "потраченным".
-                logger.info("Reminder %s for instance=%s shifted to %s (quiet hours)",
-                            number, instance_id, shift_to_morning(now, end))
+                # APScheduler job с trigger="date" одноразовый: как только он
+                # отработал (пусть и с решением "не отправлять"), он исчезает
+                # из job store навсегда. Поэтому перенос на утро должен реально
+                # переставить job здесь и сейчас — просто залогировать целевое
+                # время недостаточно, иначе напоминание молча и безвозвратно
+                # теряется до следующего перезапуска процесса (recover_jobs —
+                # это восстановление после краша, а не механизм переноса).
+                run_date = shift_to_morning(now, end)
+                scheduler.add_job(
+                    reminder_job, "date", run_date=run_date,
+                    args=[instance_id, number, bot, session_factory, scheduler],
+                    id=f"remind{number}:{instance_id}:shifted", replace_existing=True)
+                logger.info("Reminder %s for instance=%s rescheduled to %s (quiet hours)",
+                            number, instance_id, run_date)
             else:
                 logger.info("Reminder %s for instance=%s dropped (quiet hours, "
                             "shift_night_to_morning disabled)", number, instance_id)

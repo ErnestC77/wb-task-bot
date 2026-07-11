@@ -63,7 +63,8 @@ async def recover_jobs(scheduler, bot, session_factory) -> dict[str, int]:
                 if hours:
                     _add_job(scheduler, reminder_job,
                             _not_past(base + timedelta(hours=hours)),
-                            [inst.id, n, bot, session_factory], f"remind{n}:{inst.id}")
+                            [inst.id, n, bot, session_factory, scheduler],
+                            f"remind{n}:{inst.id}")
                     counters["reminders"] += 1
             _add_job(scheduler, overdue_job, _not_past(base + timedelta(hours=24)),
                     [inst.id, bot, session_factory], f"overdue:{inst.id}")

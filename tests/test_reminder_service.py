@@ -2,11 +2,15 @@ from datetime import datetime
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
 from bot.database.models import Role, TaskStatus
 from bot.database.repositories.task_repository import TaskRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.services import reminder_service
 from bot.services.reminder_service import overdue_job, reminder_job
+from bot.utils.datetime_utils import shift_to_morning
+from bot.utils.validation import validate_time_str
 
 
 async def seed_open_instance(session_factory, status=TaskStatus.CREATED):
@@ -40,7 +44,7 @@ async def test_reminder_sent_to_topic(session_factory, monkeypatch):
     _pin_now(monkeypatch, datetime(2026, 7, 10, 12, 0))     # заведомо не тихие часы
     inst_id = await seed_open_instance(session_factory)
     bot = AsyncMock()
-    await reminder_job(inst_id, 1, bot, session_factory)
+    await reminder_job(inst_id, 1, bot, session_factory, AsyncIOScheduler())
     bot.send_message.assert_awaited_once()
     kwargs = bot.send_message.await_args.kwargs
     assert kwargs["message_thread_id"] == 42
@@ -51,7 +55,7 @@ async def test_reminder_skipped_for_closed_task(session_factory, monkeypatch):
     _pin_now(monkeypatch, datetime(2026, 7, 10, 12, 0))
     inst_id = await seed_open_instance(session_factory, TaskStatus.CANCELLED)
     bot = AsyncMock()
-    await reminder_job(inst_id, 1, bot, session_factory)
+    await reminder_job(inst_id, 1, bot, session_factory, AsyncIOScheduler())
     bot.send_message.assert_not_awaited()
 
 
@@ -63,11 +67,50 @@ async def test_reminder_shifted_during_quiet_hours_not_sent_immediately(
     _pin_now(monkeypatch, datetime(2026, 7, 10, 23, 30))     # внутри тихих часов
     inst_id = await seed_open_instance(session_factory)
     bot = AsyncMock()
-    await reminder_job(inst_id, 1, bot, session_factory)
+    scheduler = AsyncIOScheduler()
+    await reminder_job(inst_id, 1, bot, session_factory, scheduler)
     bot.send_message.assert_not_awaited()
     async with session_factory() as s:
         inst = await TaskRepository(s).get_instance(inst_id)
         assert inst.reminders_sent == 0
+
+
+async def test_reminder_hitting_quiet_hours_is_actually_rescheduled(
+        session_factory, monkeypatch):
+    """Регрессия на находку ревьюера (Critical): раньше reminder_job не получал
+    ссылку на scheduler и при попадании в тихие часы просто логировал и делал
+    return — job (trigger="date") одноразовый, поэтому напоминание пропадало
+    из job store навсегда без реального переноса. Теперь reminder_job должен
+    сам себя переставить на конец тихих часов через scheduler.add_job(...), и
+    при срабатывании нового job'а сообщение должно реально уйти."""
+    now = datetime(2026, 7, 10, 23, 30)                      # внутри тихих часов
+    _pin_now(monkeypatch, now)
+    inst_id = await seed_open_instance(session_factory)
+    bot = AsyncMock()
+    scheduler = AsyncIOScheduler()
+
+    await reminder_job(inst_id, 1, bot, session_factory, scheduler)
+
+    bot.send_message.assert_not_awaited()                    # ночью не ушло сразу
+
+    end = validate_time_str("08:00")                         # default quiet_hours_end
+    # reminder_job сравнивает/переносит время в general.timezone (default
+    # Europe/Moscow, см. _pin_now выше) — считаем ожидаемое значение так же,
+    # иначе сравнение с job.trigger.run_date (он tz-aware) даст ложный fail.
+    now_aware = now.replace(tzinfo=ZoneInfo("Europe/Moscow"))
+    expected_run_date = shift_to_morning(now_aware, end)
+    job = scheduler.get_job(f"remind1:{inst_id}:shifted")
+    assert job is not None                                    # job реально переставлен
+    assert job.trigger.run_date == expected_run_date
+
+    # реально исполняем перепланированный job — "утром", вне тихих часов
+    _pin_now(monkeypatch, expected_run_date.replace(tzinfo=None))
+    await job.func(*job.args)
+
+    bot.send_message.assert_awaited_once()                    # сообщение реально дошло
+    async with session_factory() as s:
+        inst = await TaskRepository(s).get_instance(inst_id)
+        assert inst.reminders_sent == 1
 
 
 async def test_overdue_only_from_open_statuses(session_factory):

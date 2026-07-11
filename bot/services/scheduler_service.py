@@ -128,13 +128,13 @@ class SchedulerService:
             self.scheduler.add_job(
                 reminder_job, "date",
                 run_date=base + timedelta(hours=inst.remind_after_hours_snapshot),
-                args=[inst.id, 1, self.bot, self.session_factory],
+                args=[inst.id, 1, self.bot, self.session_factory, self.scheduler],
                 id=f"remind1:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
         if inst.second_remind_after_hours_snapshot:
             self.scheduler.add_job(
                 reminder_job, "date",
                 run_date=base + timedelta(hours=inst.second_remind_after_hours_snapshot),
-                args=[inst.id, 2, self.bot, self.session_factory],
+                args=[inst.id, 2, self.bot, self.session_factory, self.scheduler],
                 id=f"remind2:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
         self.scheduler.add_job(
             overdue_job, "date", run_date=base + timedelta(hours=24),
