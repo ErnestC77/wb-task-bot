@@ -148,6 +148,16 @@ class SchedulerService:
             settings = SettingService(session)
             weekday = int(await settings.get("reports.weekday"))
             hh, mm = str(await settings.get("reports.time")).split(":")
+        # Явный remove_job перед add_job: replace_existing=True сам по себе
+        # идемпотентен только для уже стартовавшего планировщика (находка
+        # Task 12-13, см. тот же паттерн в register_sync_job/rebuild_config_job
+        # ниже) — до scheduler.start() второй add_job с тем же id копится в
+        # _pending_jobs рядом с первым вместо замены, из-за чего
+        # get_job("weekly_report") продолжает возвращать job со СТАРЫМ
+        # временем после повторного вызова (найдено регрессионным тестом
+        # Task 36 на изменение reports.time через админ-панель).
+        if self.scheduler.get_job("weekly_report"):
+            self.scheduler.remove_job("weekly_report")
         self.scheduler.add_job(
             weekly_report_job, "cron", day_of_week=weekday, hour=int(hh), minute=int(mm),
             args=[self.bot, self.session_factory], id="weekly_report",
