@@ -14,6 +14,17 @@ class AuditRepository:
         await self.session.flush()
         return entry
 
+    async def get_last_by_action(self, action: str,
+                                 result: str | None = None) -> AdminAuditLog | None:
+        """Task 22: последняя запись по action (опционально фильтр по result) —
+        используется для определения момента «последней синхронизации» при
+        разрешении конфликтов (conflict_policy=admin_wins)."""
+        stmt = select(AdminAuditLog).where(AdminAuditLog.action == action)
+        if result is not None:
+            stmt = stmt.where(AdminAuditLog.result == result)
+        stmt = stmt.order_by(AdminAuditLog.id.desc()).limit(1)
+        return await self.session.scalar(stmt)
+
     async def list_page(self, page: int, page_size: int,
                          actor_user_id: int | None = None) -> list[AdminAuditLog]:
         stmt = select(AdminAuditLog)

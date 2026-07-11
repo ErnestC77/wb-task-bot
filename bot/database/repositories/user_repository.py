@@ -33,6 +33,13 @@ class UserRepository:
             stmt = stmt.where(User.is_active.is_(True))
         return list(await self.session.scalars(stmt))
 
+    async def get_active_not_in(self, telegram_ids: set[int]) -> list[User]:
+        """Task 22: активные пользователи, отсутствующие в свежей выгрузке Sheets."""
+        stmt = select(User).where(User.is_active.is_(True))
+        if telegram_ids:
+            stmt = stmt.where(User.telegram_id.not_in(telegram_ids))
+        return list(await self.session.scalars(stmt))
+
     async def upsert(self, telegram_id: int, name: str, role: str,
                       username: str | None = None, is_active: bool = True) -> User:
         user = await self.get_by_telegram_id(telegram_id)

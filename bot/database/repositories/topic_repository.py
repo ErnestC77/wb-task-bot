@@ -21,6 +21,13 @@ class TopicRepository:
             stmt = stmt.where(Topic.is_active.is_(True))
         return list(await self.session.scalars(stmt))
 
+    async def get_active_not_in(self, topic_keys: set[str]) -> list[Topic]:
+        """Task 22: активные темы, отсутствующие в свежей выгрузке Sheets."""
+        stmt = select(Topic).where(Topic.is_active.is_(True))
+        if topic_keys:
+            stmt = stmt.where(Topic.topic_key.not_in(topic_keys))
+        return list(await self.session.scalars(stmt))
+
     async def upsert(self, topic_key: str, topic_name: str,
                      message_thread_id: int | None = None,
                      event_types: str | None = None,

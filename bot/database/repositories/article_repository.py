@@ -18,6 +18,14 @@ class ArticleRepository:
         return await self.session.scalar(
             select(Article).where(Article.article == article))
 
+    async def get_active_not_in(self, articles: set[str]) -> list[Article]:
+        """Активные записи, отсутствующие среди articles (Task 22: чтобы
+        деактивировать записи, не встретившиеся в свежей выгрузке Sheets)."""
+        stmt = select(Article).where(Article.is_active.is_(True))
+        if articles:
+            stmt = stmt.where(Article.article.not_in(articles))
+        return list(await self.session.scalars(stmt))
+
     async def upsert(self, article: str, product_name: str | None = None,
                      is_active: bool = True, sort_order: int = 0,
                      responsible_user_id: int | None = None,

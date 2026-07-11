@@ -32,6 +32,13 @@ class TaskRepository:
         return list(await self.session.scalars(
             select(TaskConfig).where(TaskConfig.is_active.is_(True))))
 
+    async def get_active_configs_not_in(self, external_ids: set[str]) -> list[TaskConfig]:
+        """Task 22: активные конфиги, отсутствующие в свежей выгрузке Sheets."""
+        stmt = select(TaskConfig).where(TaskConfig.is_active.is_(True))
+        if external_ids:
+            stmt = stmt.where(TaskConfig.external_task_id.not_in(external_ids))
+        return list(await self.session.scalars(stmt))
+
     async def get_config(self, config_id: int) -> TaskConfig | None:
         return await self.session.get(TaskConfig, config_id)
 
