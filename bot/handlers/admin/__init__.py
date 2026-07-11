@@ -72,3 +72,9 @@ from bot.handlers.admin import sync as _sync  # noqa: E402
 
 admin_router.include_router(_sync.router)
 SECTION_HANDLERS["syn"] = _sync.handle_sync_section
+
+from bot.handlers.admin import operations as _operations  # noqa: E402
+
+admin_router.include_router(_operations.router)
+SECTION_HANDLERS["run"] = _operations.handle_operations_section
+SECTION_HANDLERS["act"] = _operations.handle_operations_section
