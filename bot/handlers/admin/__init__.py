@@ -19,6 +19,10 @@ from bot.handlers.admin import main as _main  # noqa: E402 — после объ
 
 admin_router.include_router(_main.router)
 
-# Роутеры разделов (Tasks 24-27) подключаются здесь по мере реализации, напр.:
-# from bot.handlers.admin import users as _users
-# admin_router.include_router(_users.router)
+# Роутеры разделов (Tasks 24-27) подключаются здесь по мере реализации.
+
+from bot.handlers.admin import settings as _settings  # noqa: E402
+
+admin_router.include_router(_settings.router)
+SECTION_HANDLERS["set"] = _settings.handle_settings_section
+SECTION_HANDLERS["rem"] = _settings.handle_reminders_section

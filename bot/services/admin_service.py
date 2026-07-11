@@ -56,8 +56,18 @@ class AdminService:
         подтверждение проверяло только факт регистрации пользователя, из-за
         чего любой активный аккаунт (даже без единого права в системе) мог
         подтвердить чужую привилегированную операцию.
+
+        Task 24 fix: `action` может содержать ":" (например
+        "settings.reset.approval.timeout_hours" — по мотивам ключей
+        SETTINGS_REGISTRY), а токен уходит в `ConfirmCb.t` и пакуется через
+        aiogram `CallbackData.pack()`, чей разделитель полей — ':'. Если
+        итоговый token содержит ':', `pack()` бросает ValueError, и
+        confirm_keyboard() ни разу не сможет отрисовать кнопку подтверждения
+        для такой операции. Поэтому action санитизируется, а разделитель
+        между action и случайным суффиксом — '_', а не ':'.
         """
-        token = f"{action}:{secrets.token_urlsafe(8)}"[:32]
+        safe_action = action.replace(":", "_")
+        token = f"{safe_action}_{secrets.token_urlsafe(8)}"[:32]
         _pending_confirms[token] = _PendingConfirm(
             op=op, required_permission=required_permission,
             creator_actor_id=creator_actor_id, created_at=time.monotonic())

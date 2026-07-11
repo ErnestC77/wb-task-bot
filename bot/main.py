@@ -22,6 +22,9 @@ async def main() -> None:
 
     scheduler = await setup_scheduler(bot, async_session_factory)
     await recover_jobs(scheduler, bot, async_session_factory)
+    # доступ из handlers через dispatcher["scheduler"].wb_service (Task 24:
+    # редактирование настроек, влияющих на планировщик, пересобирает jobs).
+    dp["scheduler"] = scheduler
     scheduler.start()
     logger.info("Scheduler started (jobs recovered)")
 

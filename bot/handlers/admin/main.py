@@ -1,5 +1,6 @@
 from aiogram import Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.keyboards.admin.confirm import ConfirmCb
@@ -50,7 +51,8 @@ async def resolve_admin(callback: CallbackQuery, session, section: str):
 
 
 @router.callback_query(AdminCb.filter())
-async def handle_section(callback: CallbackQuery, callback_data: AdminCb, session):
+async def handle_section(callback: CallbackQuery, callback_data: AdminCb, session,
+                         state: FSMContext | None = None):
     actor, svc = await resolve_admin(callback, session, callback_data.s)
     if actor is None:
         return
@@ -60,7 +62,13 @@ async def handle_section(callback: CallbackQuery, callback_data: AdminCb, sessio
     if handler is None:
         await callback.answer("Раздел в разработке")
         return
-    await handler(callback, callback_data, session, actor, svc)
+    # `state` (FSMContext) прокинут сюда для разделов, начинающих ввод значения
+    # через AdminStates.waiting_value (Task 24: раздел "Настройки" — редактирование
+    # значения по индексу в registry). Раньше (Task 23) сигнатура ограничивалась
+    # (callback, callback_data, session, actor, svc); теперь `state` — 6-й
+    # параметр, опциональный, чтобы не ломать существующие вызовы/тесты Task 23,
+    # где FSM ещё не требовался.
+    await handler(callback, callback_data, session, actor, svc, state)
 
 
 @router.callback_query(ConfirmCb.filter())
