@@ -6,13 +6,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import (
     ArticleAction, ArticleCheckItem, ArticleCheckSession, CheckStatus,
-    SessionStatus, TaskInstance, TaskStatus, User,
+    TaskInstance, TaskStatus, User,
 )
 from bot.database.repositories.article_check_repository import ArticleCheckRepository
 from bot.database.repositories.question_repository import QuestionRepository
 from bot.database.repositories.task_repository import TaskRepository
+from bot.services.approval_service import ApprovalService
 from bot.services.article_service import ArticleService
 from bot.services.setting_service import SettingService
+from bot.services.task_service import TaskService
 
 
 @dataclass
@@ -26,13 +28,16 @@ class BatchView:
 
 
 class ArticleCheckService:
-    def __init__(self, session: AsyncSession, bot=None) -> None:
+    def __init__(self, session: AsyncSession, bot=None,
+                approval_service: ApprovalService | None = None) -> None:
         self.session = session
         self.bot = bot
         self.repo = ArticleCheckRepository(session)
         self.tasks = TaskRepository(session)
+        self.task_service = TaskService(session, bot)
         self.articles = ArticleService(session)
         self.settings = SettingService(session)
+        self.approval_service = approval_service
 
     async def start_check(self, inst: TaskInstance, actor: User) -> ArticleCheckSession:
         if inst.responsible_user_id != actor.id:
@@ -122,11 +127,17 @@ class ArticleCheckService:
             if open_qs:
                 return False, f"Есть открытые вопросы: {len(open_qs)}"
         await self.repo.complete_session(s.id)
-        target = (TaskStatus.WAITING_APPROVAL if inst.need_approval_snapshot
-                  else TaskStatus.COMPLETED)
-        await self.tasks.transition_status(
-            inst.id, [TaskStatus.IN_PROGRESS], target, actor.id, "btn:finish_check",
-            completed_at=datetime.utcnow())
+        if inst.need_approval_snapshot:
+            approval = self.approval_service or ApprovalService(self.session, self.bot)
+            got = await approval.request_approval(inst, actor)
+        else:
+            got = await self.tasks.transition_status(
+                inst.id, [TaskStatus.IN_PROGRESS], TaskStatus.COMPLETED, actor.id,
+                "btn:finish_check", completed_at=datetime.utcnow())
+            if got is not None:
+                await self.task_service.refresh_task_message(got)
+        if got is None:
+            return False, "Не удалось завершить проверку: статус задачи изменился"
         return True, "Проверка завершена"
 
     async def create_action(self, item_id: int, actor: User, category_id: int,
