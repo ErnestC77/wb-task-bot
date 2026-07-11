@@ -6,11 +6,14 @@ AdminStates.waiting_value) / сброс к default (опасная операц�
 AdminService.confirm_token).
 
 Whitelist: в callback_data передаётся ИНДЕКС ключа в отсортированном registry
-категории (`k=f"{category}:{idx}"`), не имя поля. `key_by_index` — единственный
-способ превратить индекс обратно в ключ, и он проверяет диапазон против
-`category_keys()` (который сам берёт ключи только из SETTINGS_REGISTRY).
-Записи применяются исключительно через `SettingService.set/reset`, которые
-сами проверяют ключ по registry — никакого `setattr` по произвольной строке.
+категории отдельным полем (`k=category, id=idx`), не имя поля и НЕ строка вида
+"category:idx" (aiogram `CallbackData.pack()` резервирует ":" как разделитель
+полей — конкатенация через ":" ломает pack() на каждой настройке, см. Task 24
+review). `key_by_index` — единственный способ превратить индекс обратно в
+ключ, и он проверяет диапазон против `category_keys()` (который сам берёт
+ключи только из SETTINGS_REGISTRY). Записи применяются исключительно через
+`SettingService.set/reset`, которые сами проверяют ключ по registry — никакого
+`setattr` по произвольной строке.
 """
 import json
 
@@ -106,11 +109,6 @@ async def apply_setting_input(session, actor, key: str, raw: str,
 # --------------------------------------------------------------------------
 # Callback-навигация
 # --------------------------------------------------------------------------
-
-def _split_k(k: str) -> tuple[str, int]:
-    category, _, idx_s = k.rpartition(":")
-    return category, int(idx_s)
-
 
 async def _show_categories(callback: CallbackQuery, section: str,
                            categories: list[str]) -> None:
@@ -216,14 +214,11 @@ async def _dispatch(callback: CallbackQuery, callback_data: AdminCb, session, ac
     elif action == "cat":
         await _show_settings_list(callback, session, callback_data.k, callback_data.p)
     elif action == "card":
-        category, idx = _split_k(callback_data.k)
-        await _show_card(callback, session, category, idx)
+        await _show_card(callback, session, callback_data.k, callback_data.id)
     elif action == "edit":
-        category, idx = _split_k(callback_data.k)
-        await _start_edit(callback, session, state, category, idx)
+        await _start_edit(callback, session, state, callback_data.k, callback_data.id)
     elif action == "reset":
-        category, idx = _split_k(callback_data.k)
-        await _start_reset(callback, session, actor, svc, category, idx)
+        await _start_reset(callback, session, actor, svc, callback_data.k, callback_data.id)
     elif action == "noop":
         await callback.answer()
     else:

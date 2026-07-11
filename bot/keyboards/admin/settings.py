@@ -34,11 +34,13 @@ def categories_keyboard(section: str, categories: list[str]) -> InlineKeyboardMa
 def settings_list_keyboard(category: str, entries: list[tuple[int, str, str]],
                            page: int, total_pages: int) -> InlineKeyboardMarkup:
     """`entries` — [(index_в_registry, key, отображаемый_текст), ...] уже одной
-    страницы. В callback_data уходит ИНДЕКС (`a="card", k=f"{category}:{idx}"`),
-    а не имя ключа — сервер восстанавливает ключ через `key_by_index` (whitelist,
-    см. bot/handlers/admin/settings.py)."""
+    страницы. В callback_data уходит ИНДЕКС отдельным полем (`a="card", k=category,
+    id=idx`) — НЕ конкатенацией строкой через ":" (тот разделитель зарезервирован
+    aiogram `CallbackData.pack()` и ломает pack() на любом значении с ":" внутри
+    поля, см. Task 24 review). Сервер восстанавливает ключ через `key_by_index`
+    (whitelist, см. bot/handlers/admin/settings.py)."""
     rows = [[InlineKeyboardButton(
-        text=label, callback_data=AdminCb(s="set", a="card", k=f"{category}:{idx}").pack())]
+        text=label, callback_data=AdminCb(s="set", a="card", k=category, id=idx).pack())]
         for idx, _key, label in entries]
     if total_pages > 1:
         rows.append([
@@ -55,12 +57,13 @@ def settings_list_keyboard(category: str, entries: list[tuple[int, str, str]],
 
 
 def setting_card_keyboard(category: str, idx: int) -> InlineKeyboardMarkup:
-    k = f"{category}:{idx}"
+    """Индекс уходит в отдельное поле AdminCb.id, категория — в k (см. комментарий
+    в settings_list_keyboard про запрет ":" внутри значения поля CallbackData)."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✏ Изменить",
-                              callback_data=AdminCb(s="set", a="edit", k=k).pack())],
+                              callback_data=AdminCb(s="set", a="edit", k=category, id=idx).pack())],
         [InlineKeyboardButton(text="↩ Сбросить к default",
-                              callback_data=AdminCb(s="set", a="reset", k=k).pack())],
+                              callback_data=AdminCb(s="set", a="reset", k=category, id=idx).pack())],
         [InlineKeyboardButton(text="⬅ Назад",
                               callback_data=AdminCb(s="set", a="cat", k=category, p=1).pack())],
     ])

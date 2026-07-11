@@ -186,6 +186,92 @@ async def test_settings_message_handler_applies_value_for_authorized_actor(sessi
     state.clear.assert_awaited()
 
 
+# ---------------------------------------------------------------------------
+# Регрессия (Task 24 review, Critical): AdminCb(k=f"{category}:{idx}") содержал
+# буквальный ":" — служебный разделитель полей aiogram CallbackData — и
+# .pack() бросал ValueError на КАЖДОЙ настройке в КАЖДОЙ категории. Все тесты
+# выше были зелёными, потому что ни один из них реально не гонял .pack()/
+# .unpack() для settings_list_keyboard/setting_card_keyboard (в отличие от
+# ConfirmCb, где round-trip уже покрыт test_reset_goes_through_confirm_token...).
+# Эти тесты обязаны реально вызывать .pack() (а не мокать), иначе баг снова
+# останется невидимым для CI.
+# ---------------------------------------------------------------------------
+
+def test_settings_list_keyboard_pack_unpack_roundtrip_multi_digit_index():
+    """article_check — категория с 19 настройками (двузначные индексы, включая
+    18) — раньше .pack() падал с ValueError на каждой строке."""
+    from bot.handlers.admin.settings import category_keys
+    from bot.keyboards.admin.settings import settings_list_keyboard
+    from bot.keyboards.admin.main import AdminCb
+
+    keys = category_keys("article_check")
+    assert len(keys) == 19
+    entries = [(idx, key, f"{key} = 1") for idx, key in enumerate(keys)]
+    kb = settings_list_keyboard("article_check", entries, page=1, total_pages=1)
+
+    # первая строка на каждую настройку + пагинация (пропущена, total_pages=1) + "Назад"
+    setting_rows = kb.inline_keyboard[:-1]
+    assert len(setting_rows) == 19
+    for idx, row in enumerate(setting_rows):
+        packed = row[0].callback_data                  # .pack() уже вызван конструктором клавиатуры
+        cb = AdminCb.unpack(packed)                     # реальный round-trip, не мок
+        assert cb.s == "set" and cb.a == "card"
+        assert cb.k == "article_check"
+        assert cb.id == idx
+
+
+def test_settings_list_keyboard_pagination_and_back_roundtrip():
+    from bot.keyboards.admin.settings import settings_list_keyboard
+    from bot.keyboards.admin.main import AdminCb
+
+    entries = [(0, "approval.timeout_hours", "approval.timeout_hours = 24")]
+    kb = settings_list_keyboard("approval", entries, page=2, total_pages=3)
+    pag_row = kb.inline_keyboard[-2]
+    prev_cb = AdminCb.unpack(pag_row[0].callback_data)
+    next_cb = AdminCb.unpack(pag_row[2].callback_data)
+    assert prev_cb.k == "approval" and prev_cb.p == 1
+    assert next_cb.k == "approval" and next_cb.p == 3
+    back_cb = AdminCb.unpack(kb.inline_keyboard[-1][0].callback_data)
+    assert back_cb.a == "open"
+
+
+def test_setting_card_keyboard_pack_unpack_roundtrip():
+    """setting_card_keyboard — тот же баг, что и в settings_list_keyboard
+    (реализатор занёс его повторно после того, как уже нашёл и починил
+    аналогичный случай в ConfirmCb)."""
+    from bot.keyboards.admin.settings import setting_card_keyboard
+    from bot.keyboards.admin.main import AdminCb
+
+    kb = setting_card_keyboard("article_check", 18)      # многозначный индекс
+    edit_cb = AdminCb.unpack(kb.inline_keyboard[0][0].callback_data)
+    reset_cb = AdminCb.unpack(kb.inline_keyboard[1][0].callback_data)
+    back_cb = AdminCb.unpack(kb.inline_keyboard[2][0].callback_data)
+
+    assert edit_cb.a == "edit" and edit_cb.k == "article_check" and edit_cb.id == 18
+    assert reset_cb.a == "reset" and reset_cb.k == "article_check" and reset_cb.id == 18
+    assert back_cb.a == "cat" and back_cb.k == "article_check" and back_cb.p == 1
+
+
+async def test_show_settings_list_and_show_card_use_real_pack_unpack(session):
+    """Сквозной happy-path: _show_settings_list рендерит клавиатуру реальными
+    .pack()'ами, а _show_card восстанавливает category/idx из AdminCb.k/.id
+    (не из парсинга строки) — воспроизводит ровно тот путь, что раньше падал
+    в реальном Telegram (settings_list_keyboard('approval', [(0, ...)], 1, 1))."""
+    from bot.handlers.admin.settings import _show_card, _show_settings_list
+    from bot.keyboards.admin.main import AdminCb
+
+    callback = AsyncMock()
+    await _show_settings_list(callback, session, "approval", 1)
+    reply_markup = callback.message.edit_text.await_args.kwargs.get("reply_markup") \
+        or callback.message.edit_text.await_args.args[1]
+    card_cb = AdminCb.unpack(reply_markup.inline_keyboard[0][0].callback_data)
+    assert card_cb.a == "card" and card_cb.k == "approval"
+
+    callback2 = AsyncMock()
+    await _show_card(callback2, session, card_cb.k, card_cb.id)
+    callback2.message.edit_text.assert_awaited()
+
+
 async def test_rem_section_opens_reminders_and_approval_categories(session):
     owner = await _owner(session)
     await session.commit()
