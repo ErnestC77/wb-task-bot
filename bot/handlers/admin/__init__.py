@@ -31,3 +31,8 @@ from bot.handlers.admin import users as _users  # noqa: E402
 
 admin_router.include_router(_users.router)
 SECTION_HANDLERS["usr"] = _users.handle_users_section
+
+from bot.handlers.admin import topics as _topics  # noqa: E402
+
+admin_router.include_router(_topics.router)
+SECTION_HANDLERS["top"] = _topics.handle_topics_section
