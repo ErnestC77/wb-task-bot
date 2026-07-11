@@ -32,6 +32,15 @@ class TaskRepository:
         return list(await self.session.scalars(
             select(TaskConfig).where(TaskConfig.is_active.is_(True))))
 
+    async def get_all_configs(self, include_inactive: bool = False) -> list[TaskConfig]:
+        """Task 27: список шаблонов в админ-панели (в отличие от get_active_configs,
+        нужны и неактивные — та же пара методов, что TopicRepository.get_all /
+        UserRepository.get_all)."""
+        stmt = select(TaskConfig)
+        if not include_inactive:
+            stmt = stmt.where(TaskConfig.is_active.is_(True))
+        return list(await self.session.scalars(stmt))
+
     async def get_active_configs_not_in(self, external_ids: set[str]) -> list[TaskConfig]:
         """Task 22: активные конфиги, отсутствующие в свежей выгрузке Sheets."""
         stmt = select(TaskConfig).where(TaskConfig.is_active.is_(True))

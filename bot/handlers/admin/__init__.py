@@ -36,3 +36,8 @@ from bot.handlers.admin import topics as _topics  # noqa: E402
 
 admin_router.include_router(_topics.router)
 SECTION_HANDLERS["top"] = _topics.handle_topics_section
+
+from bot.handlers.admin import task_configs as _task_configs  # noqa: E402
+
+admin_router.include_router(_task_configs.router)
+SECTION_HANDLERS["cfg"] = _task_configs.handle_configs_section

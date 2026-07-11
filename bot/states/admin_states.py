@@ -26,3 +26,11 @@ class AdminStates(StatesGroup):
     waiting_topic_name = State()
     waiting_topic_thread = State()
     waiting_topic_events = State()
+
+    # Task 27 — раздел «✅ Шаблоны задач»: единое состояние на весь мастер
+    # создания шаблона (шаг хранится в FSM data как "step", т.к. шаги вперемешку
+    # текстовые и кнопочные — см. bot/handlers/admin/task_configs.py) и единое
+    # состояние на редактирование ОДНОГО текстового поля существующего шаблона
+    # (whitelist EDITABLE_FIELDS, поле хранится в data как "field").
+    waiting_cfg_create = State()
+    waiting_cfg_edit = State()
