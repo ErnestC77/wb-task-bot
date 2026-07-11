@@ -406,6 +406,15 @@ async def handle_sch_callback(callback: CallbackQuery, callback_data: SchCb, ses
         return
     scheduler_svc = _extract_scheduler_svc(dispatcher)
     action = callback_data.a
+    # Навигационные действия (список/карточка/список полей, включая «❌ Отменить»
+    # -> SchCb(a="card", ...)) покидают контекст редактирования ОДНОГО поля —
+    # обязаны сбросить waiting_sch_edit, иначе следующее произвольное текстовое
+    # сообщение пользователя (он думает, что отменил) молча перехватывается
+    # handle_sch_edit_message и применяется как новое значение поля расписания
+    # (найдено ревью Task 28, воспроизведено эмпирически: клик "Отменить" ->
+    # текст "42" -> schedule_interval молча становится 42).
+    if action in ("list", "card", "fields") and state is not None:
+        await state.clear()
     if action == "list":
         await _show_schedules_list(callback, session, callback_data.p)
     elif action == "card":

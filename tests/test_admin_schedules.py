@@ -13,6 +13,25 @@ async def _owner(session):
     return await UserRepository(session).upsert(telegram_id=1, name="O", role=Role.OWNER)
 
 
+class FakeState:
+    def __init__(self):
+        self.data: dict = {}
+        self.state = None
+
+    async def get_data(self):
+        return dict(self.data)
+
+    async def update_data(self, **kwargs):
+        self.data.update(kwargs)
+
+    async def set_state(self, state):
+        self.state = state
+
+    async def clear(self):
+        self.data = {}
+        self.state = None
+
+
 # ---------------------------------------------------------------------------
 # Step 1 (брифовые тесты, дословно по сигнатуре/сценарию; adapted к тому, что
 # apply_schedule_field теперь коммитит ВНУТРИ себя перед rebuild — см. docstring
@@ -183,6 +202,39 @@ async def test_show_card_renders_next_run_at(session):
     text = callback.message.edit_text.await_args.args[0]
     assert "every_n_days" in text
     assert "Ближайший запуск" in text
+
+
+async def test_cancel_button_clears_fsm_state_no_stray_text_applied(session):
+    """Регресс на находку ревью Task 28: кнопка «❌ Отменить» (SchCb(a="card"))
+    ОБЯЗАНА сбросить waiting_sch_edit — до фикса состояние оставалось активным,
+    и следующее произвольное текстовое сообщение пользователя (он думает, что
+    отменил) молча перехватывалось handle_sch_edit_message и применялось как
+    новое значение поля (воспроизведено ревью: клик "Отменить" -> текст "42"
+    -> schedule_interval молча стал 42)."""
+    from bot.handlers.admin.schedules import handle_sch_callback
+    from bot.keyboards.admin.schedules import SchCb
+    from bot.states.admin_states import AdminStates
+
+    owner = await _owner(session)
+    cfg, _ = await make_config(session)
+    cfg.schedule_interval = 2
+    await session.commit()
+
+    state = FakeState()
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    # Начать редактирование schedule_interval (индекс 2 в SCHEDULE_FIELD_LIST).
+    await handle_sch_callback(callback, SchCb(a="editfield", id=cfg.id, k="2"), session, state)
+    assert state.state == AdminStates.waiting_sch_edit
+    assert state.data.get("field") == "schedule_interval"
+
+    # Пользователь жмёт «❌ Отменить» -> SchCb(a="card", id=cfg.id).
+    await handle_sch_callback(callback, SchCb(a="card", id=cfg.id), session, state)
+    # aiogram маршрутизирует message-хендлеры по текущему FSM-состоянию —
+    # раз state сброшен, handle_sch_edit_message для этого чата больше не
+    # вызовется вообще; здесь мы проверяем именно причину бага напрямую.
+    assert state.state is None and state.data == {}
+    assert cfg.schedule_interval == 2                   # значение не тронуто
 
 
 async def test_show_card_unknown_config_rejected(session):
