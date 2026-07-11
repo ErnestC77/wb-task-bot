@@ -51,3 +51,9 @@ from bot.handlers.admin import articles as _articles  # noqa: E402
 
 admin_router.include_router(_articles.router)
 SECTION_HANDLERS["art"] = _articles.handle_articles_section
+
+from bot.handlers.admin import dictionaries as _dictionaries  # noqa: E402
+
+admin_router.include_router(_dictionaries.router)
+SECTION_HANDLERS["dic"] = _dictionaries.handle_dictionaries_section
+SECTION_HANDLERS["dic2"] = _dictionaries.handle_dictionaries_section

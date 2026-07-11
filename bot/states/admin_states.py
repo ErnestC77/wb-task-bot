@@ -46,3 +46,11 @@ class AdminStates(StatesGroup):
     # "article" -> "product_name").
     waiting_art_edit = State()
     waiting_art_add = State()
+
+    # Task 30 — раздел «⚠ Категории проблем»/«🛠 Варианты решений»/«Категории
+    # товаров»: переименование существующей записи (текст) и мастер добавления
+    # (шаг в data как "step": "name" -> "require_comment" (кнопка) ->
+    # "default_next_check_days" (текст) — два последних шага пропускаются для
+    # kind="article_categories", у которого нет этих полей).
+    waiting_dic_rename = State()
+    waiting_dic_add = State()
