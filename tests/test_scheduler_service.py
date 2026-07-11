@@ -134,3 +134,19 @@ async def test_rebuild_config_job_no_duplicate_jobs(session_factory):
 
     jobs = [j for j in scheduler.get_jobs() if j.id == f"config:{cfg_id}"]
     assert len(jobs) == 1                                  # без дублей, а не растёт с каждым вызовом
+
+
+async def test_setup_scheduler_uses_utc_timezone(session_factory):
+    """Regression (Task 38, найдено интеграционным тестом на реальном
+    ожидании): AsyncIOScheduler() без явного timezone берёт локальный часовой
+    пояс ОС и интерпретирует наивные (UTC) run_date неверно — на хосте с
+    локальным поясом != UTC job'ы либо срабатывают не в то время, либо молча
+    пропускаются как "безнадёжно просроченные" (misfire_grace_time). Этот
+    тест проверяет ИМЕННО продовую функцию setup_scheduler (не отдельно
+    сконструированный в тесте scheduler) — предыдущая версия покрытия
+    страховала только тестовые schedulers и не поймала бы регресс в самой
+    setup_scheduler, если бы кто-то убрал timezone="UTC" оттуда."""
+    from bot.services.scheduler_service import setup_scheduler
+
+    scheduler = await setup_scheduler(AsyncMock(), session_factory)
+    assert str(scheduler.timezone) == "UTC"
