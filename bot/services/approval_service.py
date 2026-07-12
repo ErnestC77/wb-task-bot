@@ -129,10 +129,16 @@ class ApprovalService:
             self.scheduler.remove_job(f"auto_approve:{instance_id}")
 
     async def _notify_responsible(self, inst: TaskInstance, text: str) -> None:
-        if inst.responsible_user is None:
+        """В чат самой задачи (та же группа/тема, где создана задача), а не
+        личным сообщением ответственному — DM недоступен, пока пользователь
+        сам не написал боту в личку хотя бы раз, к тому же уведомление в
+        общем чате видно всей команде, не только исполнителю."""
+        if inst.telegram_chat_id is None:
             return
         try:
-            await self.bot.send_message(chat_id=inst.responsible_user.telegram_id, text=text)
+            await self.bot.send_message(
+                chat_id=inst.telegram_chat_id, message_thread_id=inst.topic_snapshot,
+                text=text)
         except Exception as exc:                     # noqa: BLE001
             logger.warning("Notify responsible failed: %s", exc)
 
@@ -151,10 +157,11 @@ async def auto_approve_job(instance_id: int, bot, session_factory) -> None:
             return                                    # уже approved/возвращена — no-op
         await TaskService(session, bot).refresh_task_message(got)
         if bool(await settings.get("approval.notify_on_auto_approve")) \
-                and got.responsible_user is not None:
+                and got.telegram_chat_id is not None:
             try:
-                await bot.send_message(chat_id=got.responsible_user.telegram_id,
-                                       text="✅ Задача авто-подтверждена (нет реакции)")
+                await bot.send_message(
+                    chat_id=got.telegram_chat_id, message_thread_id=got.topic_snapshot,
+                    text="✅ Задача авто-подтверждена (нет реакции)")
             except Exception:                        # noqa: BLE001
                 pass
         await session.commit()
