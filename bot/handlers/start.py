@@ -57,6 +57,8 @@ async def cmd_start(message: Message, session) -> None:
         f"Наберите /help, чтобы увидеть список доступных команд.")
     if message.chat.type != "private" and actor.role in (Role.OWNER, Role.PARTNER):
         text += f"\n\nID этого чата: <code>{message.chat.id}</code>"
+        if message.is_topic_message and message.message_thread_id is not None:
+            text += f"\nID этой темы (message_thread_id): <code>{message.message_thread_id}</code>"
     await message.answer(text)
 
 
