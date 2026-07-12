@@ -24,10 +24,14 @@ from bot.config import get_settings
 async def main(telegram_id: int, name: str) -> None:
     engine = create_async_engine(get_settings().database_url)
     async with engine.begin() as conn:
+        # is_active/private_chat_available имеют только Python-default на
+        # уровне ORM (mapped_column(default=...)), НЕ server_default в схеме —
+        # сырой SQL INSERT (в обход ORM) обязан проставить их явно, иначе
+        # NOT NULL constraint violation.
         row = (await conn.execute(
             text(
-                "INSERT INTO users (telegram_id, name, role, is_active) "
-                "VALUES (:tid, :name, 'owner', true) "
+                "INSERT INTO users (telegram_id, name, role, is_active, private_chat_available) "
+                "VALUES (:tid, :name, 'owner', true, true) "
                 "ON CONFLICT (telegram_id) DO UPDATE SET role='owner', is_active=true "
                 "RETURNING id, telegram_id, name, role, is_active"
             ),
