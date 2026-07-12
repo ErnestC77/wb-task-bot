@@ -52,9 +52,12 @@ async def cmd_start(message: Message, session) -> None:
         await UserService(session).mark_private_chat_available(actor.telegram_id)
         await session.commit()
     role_label = ROLE_LABELS.get(actor.role, actor.role)
-    await message.answer(
+    text = (
         f"Здравствуйте, {html_escape(actor.name)}! Ваша роль: {role_label}.\n"
         f"Наберите /help, чтобы увидеть список доступных команд.")
+    if message.chat.type != "private" and actor.role in (Role.OWNER, Role.PARTNER):
+        text += f"\n\nID этого чата: <code>{message.chat.id}</code>"
+    await message.answer(text)
 
 
 @router.message(Command("help"))
