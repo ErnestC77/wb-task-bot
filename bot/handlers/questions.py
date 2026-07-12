@@ -147,7 +147,18 @@ async def handle_question_text(message: Message, session, state: FSMContext) -> 
             f"Сократите и отправьте снова:")
         return
     qsvc = QuestionService(session, message.bot)
-    await qsvc.ask(inst, actor, text, item=item)
+    try:
+        await qsvc.ask(inst, actor, text, item=item)
+    except ValueError:
+        # resolve_receiver() не нашёл ни одного активного получателя
+        # (questions.default_receiver_user_id/fallback не настроены) —
+        # раньше это падало необработанным исключением, и пользователь
+        # не получал вообще никакого ответа.
+        await message.answer(
+            "Не настроен получатель вопросов. Обратитесь к администратору: "
+            "/admin → Настройки → questions.default_receiver_user_id.")
+        await state.clear()
+        return
     await state.clear()
     await message.answer("Вопрос отправлен получателю.")
     await session.commit()

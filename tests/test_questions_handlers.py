@@ -190,6 +190,33 @@ async def test_question_text_rejects_too_long(session):
     assert "длин" in text.lower()
 
 
+async def test_question_text_no_receiver_configured_gives_feedback_not_silent_crash(session):
+    """Regression: resolve_receiver() поднимал ValueError, если ни
+    questions.default_receiver_user_id, ни fallback не настроены — раньше
+    это падало необработанным исключением внутри handle_question_text, и
+    пользователь не получал вообще никакого ответа ("ввожу вопрос и ничего
+    не происходит")."""
+    inst, valya, _ = await seed(session)
+    # НЕ настраиваем questions.default_receiver_user_id/fallback — оба 0 по умолчанию
+
+    from bot.handlers.questions import handle_question_text, handle_task_question
+
+    callback = AsyncMock()
+    callback.from_user.id = valya.telegram_id
+    state = _state_for(valya.telegram_id)
+    await handle_task_question(callback, TaskCb(a="question", i=inst.id), session, state)
+
+    message = AsyncMock()
+    message.from_user.id = valya.telegram_id
+    message.text = "Есть проблема с поставкой"
+    await handle_question_text(message, session, state)
+
+    assert await state.get_state() is None              # FSM не завис
+    message.answer.assert_awaited()
+    text = message.answer.await_args.args[0]
+    assert "получател" in text.lower()
+
+
 # ---------------------------------------------------------------------------
 # QstCb(a="ans") — критическая проверка: отвечать может только адресат
 # ---------------------------------------------------------------------------

@@ -114,6 +114,15 @@ async def handle_approve(callback: CallbackQuery, callback_data: ApproveCb, sess
         return
     got = await svc.approve(callback_data.i, actor)
     await session.commit()
+    if got is not None:
+        # Убираем кнопки с сообщения-запроса на подтверждение — иначе оно
+        # остаётся кликабельным (повторное нажатие лишь отвечало «Уже
+        # обработано», но визуально ничего не менялось).
+        try:
+            await callback.message.edit_text(
+                callback.message.html_text + "\n\n✅ Подтверждено", reply_markup=None)
+        except Exception:                              # noqa: BLE001
+            pass
     await callback.answer("Подтверждено ✅" if got else "Уже обработано")
 
 
@@ -126,7 +135,11 @@ async def handle_return_request(callback: CallbackQuery, callback_data: ApproveC
         await callback.answer("Недостаточно прав", show_alert=True)
         return
     await state.set_state(ReturnCommentStates.waiting)
-    await state.update_data(instance_id=callback_data.i)
+    await state.update_data(
+        instance_id=callback_data.i,
+        approval_chat_id=callback.message.chat.id,
+        approval_message_id=callback.message.message_id,
+        approval_html_text=callback.message.html_text)
     await callback.message.answer("Введите комментарий для возврата в работу:")
     await callback.answer()
 
@@ -157,4 +170,15 @@ async def handle_return_comment(message: Message, session, state: FSMContext):
         return
     await state.clear()
     await session.commit()
+    if got is not None:
+        approval_chat_id = data.get("approval_chat_id")
+        approval_message_id = data.get("approval_message_id")
+        if approval_chat_id is not None and approval_message_id is not None:
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=approval_chat_id, message_id=approval_message_id,
+                    text=(data.get("approval_html_text") or "") + "\n\n🔁 Возвращено в работу",
+                    reply_markup=None)
+            except Exception:                          # noqa: BLE001
+                pass
     await message.answer("🔁 Возвращено в работу" if got else "Уже обработано")

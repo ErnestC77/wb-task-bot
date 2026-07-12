@@ -260,6 +260,20 @@ async def test_approve_by_owner_ok(session):
     assert got.status == TaskStatus.APPROVED
 
 
+async def test_approve_by_owner_removes_buttons_from_message(session):
+    from bot.handlers.callbacks import handle_approve
+    inst, _valya, owner = await _waiting_approval_task(session)
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    callback.message.html_text = "Задача выполнена и ждет подтверждения"
+    await handle_approve(callback, ApproveCb(a="ok", i=inst.id), session)
+    callback.message.edit_text.assert_awaited_once()
+    args, kwargs = callback.message.edit_text.await_args
+    text = args[0] if args else kwargs.get("text", "")
+    assert "Подтверждено" in text
+    assert kwargs.get("reply_markup") is None
+
+
 async def test_approve_by_non_approver_rejected(session):
     from bot.handlers.callbacks import handle_approve
     inst, valya, _owner = await _waiting_approval_task(session)
@@ -308,6 +322,29 @@ async def test_return_request_starts_fsm_then_returns_to_work(session):
     got = await TaskRepository(session).get_instance(inst.id)
     assert got.status == TaskStatus.IN_PROGRESS
     assert await state.get_state() is None            # состояние очищено
+
+
+async def test_return_to_work_removes_buttons_from_approval_message(session):
+    from bot.handlers.callbacks import handle_return_comment, handle_return_request
+    inst, _valya, owner = await _waiting_approval_task(session)
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    callback.message.chat.id = -100
+    callback.message.message_id = 42
+    callback.message.html_text = "Задача выполнена и ждет подтверждения"
+    state = _state_for(owner.telegram_id)
+    await handle_return_request(callback, ApproveCb(a="back", i=inst.id), session, state)
+
+    message = AsyncMock()
+    message.from_user.id = owner.telegram_id
+    message.text = "Проверьте ещё раз"
+    await handle_return_comment(message, session, state)
+
+    message.bot.edit_message_text.assert_awaited_once()
+    _, kwargs = message.bot.edit_message_text.await_args
+    assert kwargs.get("chat_id") == -100 and kwargs.get("message_id") == 42
+    assert "Возвращено в работу" in kwargs.get("text", "")
+    assert kwargs.get("reply_markup") is None
 
 
 async def test_return_request_by_non_approver_rejected(session):
