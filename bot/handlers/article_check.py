@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from bot.database.models import (
     ArticleCategory, ArticleCheckSession, CheckStatus, DecisionType, ProblemDecisionLink,
-    ProblemType,
+    ProblemType, TaskScenario, TaskStatus,
 )
 from bot.database.repositories.article_check_repository import ArticleCheckRepository
 from bot.keyboards.article_check_keyboards import (
@@ -19,6 +19,7 @@ from bot.keyboards.article_check_keyboards import (
 from bot.keyboards.task_keyboards import TaskCb
 from bot.services.article_check_service import ArticleCheckService
 from bot.services.setting_service import SettingService
+from bot.services.task_service import TaskService
 from bot.services.user_service import UserService
 from bot.states.article_check_states import ArticleActionStates
 
@@ -45,6 +46,21 @@ async def handle_start_check(callback: CallbackQuery, callback_data: TaskCb, ses
     inst = await svc.tasks.get_instance(callback_data.i)
     if actor is None or inst is None:
         await callback.answer("Недоступно", show_alert=True)
+        return
+    if inst.scenario_snapshot != TaskScenario.ARTICLE_CHECK:
+        # "🔄 В работе" простой задачи — не пакетная проверка артикулов,
+        # обычный переход статуса (см. handle_done/handle_postpone в
+        # bot/handlers/callbacks.py, тот же паттерн).
+        tasks = TaskService(session, callback.bot)
+        try:
+            got = await tasks.user_transition(
+                inst.id, [TaskStatus.CREATED, TaskStatus.POSTPONED],
+                TaskStatus.IN_PROGRESS, actor, "btn:start")
+        except PermissionError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        await session.commit()
+        await callback.answer("В работе 🔄" if got else "Уже обработано")
         return
     try:
         s = await svc.start_check(inst, actor)

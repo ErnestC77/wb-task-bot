@@ -2,12 +2,16 @@ from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import func, select
 
-from bot.database.models import Article, ArticleCheckSession, CheckStatus, Role
+from bot.database.models import (
+    Article, ArticleCheckSession, CheckStatus, Role, TaskStatus,
+)
 from bot.database.repositories.article_check_repository import ArticleCheckRepository
 from bot.database.repositories.task_repository import TaskRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.keyboards.article_check_keyboards import ChkCb, batch_keyboard, render_batch
+from bot.keyboards.task_keyboards import TaskCb
 from bot.services.article_check_service import ArticleCheckService
 from bot.services.setting_service import SettingService
 from tests.test_article_check_service import seed
@@ -106,6 +110,54 @@ async def test_open_item_denies_unregistered_user(session):          # нахо�
     await handle_open_item(callback, cb_data, session)
     _denied(callback)
     callback.message.edit_text.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# TaskCb(a="start") на scenario=simple НЕ должен открывать пакетную проверку
+# артикулов (баг: единственный handler на этот callback раньше безусловно
+# вызывал ArticleCheckService.start_check для ЛЮБОГО сценария).
+# ---------------------------------------------------------------------------
+
+async def _seed_simple_created(session):
+    users = UserRepository(session)
+    valya = await users.upsert(telegram_id=11, name="Валя", role=Role.MANAGER_WB)
+    repo = TaskRepository(session)
+    cfg = await repo.upsert_config(dict(
+        external_task_id="simple_task", title="Простая задача",
+        scenario="simple", schedule_type="daily",
+        responsible_user_id=valya.id, need_approval=False, is_active=True))
+    inst = await repo.create_instance_idempotent(
+        cfg, datetime(2026, 7, 10, 9), datetime(2026, 7, 10, 18),
+        dict(title_snapshot="Простая задача", scenario_snapshot="simple",
+             need_approval_snapshot=False, approval_timeout_hours_snapshot=24,
+             responsible_name_snapshot="Валя"))
+    await session.commit()
+    return inst, valya
+
+
+async def test_start_simple_task_transitions_status_not_article_check(session):
+    from bot.handlers.article_check import handle_start_check
+    inst, valya = await _seed_simple_created(session)
+    callback = AsyncMock()
+    callback.from_user.id = valya.telegram_id
+    await handle_start_check(callback, TaskCb(a="start", i=inst.id), session)
+
+    got = await TaskRepository(session).get_instance(inst.id)
+    assert got.status == TaskStatus.IN_PROGRESS
+    n_sessions = await session.scalar(select(func.count(ArticleCheckSession.id)))
+    assert n_sessions == 0                              # не открыло пакетную проверку
+    callback.message.answer.assert_not_awaited()        # не отправило вид пачки артикулов
+
+
+async def test_start_simple_task_by_stranger_rejected(session):
+    from bot.handlers.article_check import handle_start_check
+    inst, _valya = await _seed_simple_created(session)
+    callback = AsyncMock()
+    callback.from_user.id = 999999999                   # не зарегистрирован
+    await handle_start_check(callback, TaskCb(a="start", i=inst.id), session)
+    got = await TaskRepository(session).get_instance(inst.id)
+    assert got.status == TaskStatus.CREATED              # не изменилось
+    callback.answer.assert_awaited()
 
 
 async def test_finish_batch_denies_foreign_registered_user(session):  # находка 2

@@ -45,6 +45,14 @@ def test_render_escapes_html():
     assert "Валя" in text and "12:00" in text
 
 
+def test_render_mentions_responsible_user_by_id():
+    inst = make_inst(TaskStatus.CREATED)
+    inst.responsible_telegram_id_snapshot = 555
+    text = render_task_message(inst)
+    assert 'href="tg://user?id=555"' in text
+    assert ">Валя</a>" in text
+
+
 def test_render_reminder_escapes_html():
     inst = make_inst(TaskStatus.CREATED)
     inst.title_snapshot = "<script>x</script>"

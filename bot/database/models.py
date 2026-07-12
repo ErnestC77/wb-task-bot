@@ -220,6 +220,7 @@ class TaskInstance(Base):
     title_snapshot: Mapped[str] = mapped_column(String(255))
     description_snapshot: Mapped[str | None] = mapped_column(Text)
     responsible_name_snapshot: Mapped[str | None] = mapped_column(String(128))
+    responsible_telegram_id_snapshot: Mapped[int | None] = mapped_column(BigInteger)
     need_approval_snapshot: Mapped[bool] = mapped_column(Boolean, default=False)
     approval_timeout_hours_snapshot: Mapped[int] = mapped_column(Integer, default=24)
     remind_after_hours_snapshot: Mapped[int | None] = mapped_column(Integer)

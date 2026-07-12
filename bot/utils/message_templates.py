@@ -5,7 +5,7 @@ Global Constraint: все динамические значения (назва�
 экранируются через html_escape перед вставкой в HTML-сообщение.
 """
 from bot.database.models import TaskInstance, TaskQuestion, TaskStatus
-from bot.utils.html_utils import bold, html_escape
+from bot.utils.html_utils import bold, html_escape, mention
 
 STATUS_LABELS = {
     TaskStatus.CREATED: "🆕 Создана",
@@ -25,7 +25,10 @@ def render_task_message(inst: TaskInstance) -> str:
     lines = [f"📌 {bold(inst.title_snapshot)}"]
     if inst.description_snapshot:
         lines.append(html_escape(inst.description_snapshot))
-    if inst.responsible_name_snapshot:
+    if inst.responsible_telegram_id_snapshot is not None:
+        lines.append("Ответственный: "
+                     f"{mention(inst.responsible_telegram_id_snapshot, inst.responsible_name_snapshot)}")
+    elif inst.responsible_name_snapshot:
         lines.append(f"Ответственный: {html_escape(inst.responsible_name_snapshot)}")
     if inst.due_at:
         lines.append(f"Срок: сегодня до {inst.due_at.strftime('%H:%M')}")

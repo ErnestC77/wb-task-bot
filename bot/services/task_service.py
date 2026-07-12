@@ -36,6 +36,8 @@ class TaskService:
             description_snapshot=config.description,
             responsible_name_snapshot=(config.responsible_user.name
                                        if config.responsible_user else None),
+            responsible_telegram_id_snapshot=(config.responsible_user.telegram_id
+                                              if config.responsible_user else None),
             need_approval_snapshot=config.need_approval,
             approval_timeout_hours_snapshot=int(
                 await self.settings.get("approval.timeout_hours")),
