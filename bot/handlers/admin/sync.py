@@ -76,7 +76,17 @@ async def last_sync_summary(session) -> str | None:
 
 
 async def dry_run_sync(session, actor) -> dict:
-    svc = GoogleSheetsService(session, client=None)
+    """Читает РЕАЛЬНЫЕ строки из Google Sheets (как и apply), но sync_all
+    с dry_run=True откатывает каждый SAVEPOINT — в БД ничего не попадает.
+    Раньше здесь всегда был client=None (пустые rows), из-за чего preview
+    не показывал содержимое таблицы, только то, что было бы деактивировано,
+    если бы лист был пуст."""
+    settings_svc = SettingService(session)
+    spreadsheet_id = (str(await settings_svc.get("sync.spreadsheet_id"))
+                      or get_settings().google_sheets_spreadsheet_id)
+    client = SheetsClient(get_settings().google_sheets_credentials_file, spreadsheet_id) \
+        if spreadsheet_id else None
+    svc = GoogleSheetsService(session, client=client)
     return await svc.sync_all(dry_run=True, actor_user_id=actor.id)
 
 
