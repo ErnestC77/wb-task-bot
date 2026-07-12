@@ -6,7 +6,14 @@
 Запуск: python scripts/add_owner.py <telegram_id> <name>
 """
 import asyncio
+import os
 import sys
+
+# python scripts/add_owner.py кладёт на sys.path каталог scripts/, а не
+# корень проекта (/app) — bot/ пакет отсюда не виден. Добавляем корень
+# явно, чтобы скрипт работал независимо от того, как его запускают
+# (PYTHONPATH снаружи может быть не задан, например в one-off job'е PaaS).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
