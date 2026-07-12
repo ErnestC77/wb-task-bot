@@ -11,13 +11,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.config import get_settings
 from bot.database.models import TaskConfig, User
 from bot.handlers.admin.task_configs import manual_run_config
+from bot.loader import create_bot
 from bot.services.google_sheets_service import GoogleSheetsService, SheetsClient
 from bot.services.setting_service import SettingService
 
@@ -26,7 +26,7 @@ async def main() -> None:
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    bot = Bot(token=settings.bot_token)
+    bot = create_bot(settings.bot_token)  # тот же parse_mode=HTML, что у боевого бота
 
     async with session_factory() as session:
         owner = (await session.execute(
