@@ -1,7 +1,10 @@
 """Разовая диагностика: загрузить основные конфигурационные таблицы из JSON
 (см. scripts/export_core_data.py) в текущую БД (DATABASE_URL). Схема должна
-быть уже создана (alembic upgrade head). Пишет через RAW INSERT с явным id
-(чтобы сохранить внешние ключи между таблицами), затем сбрасывает sequence.
+быть уже создана (alembic upgrade head) — миграция 0002 сама сеет дефолтные
+settings/topics/tasks_config, поэтому перед загрузкой эти 4 таблицы
+очищаются (TRUNCATE ... CASCADE), иначе INSERT с явным id упадёт на
+конфликте с сид-данными. Пишет через RAW INSERT с явным id (чтобы сохранить
+внешние ключи между таблицами), затем сбрасывает sequence.
 
 Запуск: python scripts/import_core_data.py /path/to/core_data.json
 """
@@ -12,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from sqlalchemy import insert, select, text
+from sqlalchemy import insert, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from bot.config import get_settings
@@ -34,10 +37,8 @@ async def main(path: str) -> None:
     engine = create_async_engine(settings.database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:
-        existing_users = (await session.execute(select(User.id))).scalars().all()
-        if existing_users:
-            print("БД не пуста (есть users) — прерываю, чтобы не задвоить данные.")
-            return
+        table_names = ", ".join(model.__table__.name for model, _ in TABLES)
+        await session.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
         for model, name in TABLES:
             rows = dump.get(name, [])
             if not rows:
