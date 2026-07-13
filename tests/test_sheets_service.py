@@ -178,7 +178,8 @@ async def test_sync_tasks_add_and_deactivate(session_factory):
         cfg = await s.scalar(select(TaskConfig).where(
             TaskConfig.external_task_id == "articles_check_all"))
         assert cfg.scenario == "article_check"
-        assert cfg.due_time.isoformat() == "18:00:00"
+        assert cfg.due_time.isoformat() == "18:00:00"     # дедлайн в тексте — как в таблице, МСК
+        assert cfg.time.isoformat() == "15:00:00"         # реальный час отправки — в UTC (МСК-3)
 
     async with session_factory() as s:
         svc = GoogleSheetsService(s, client=None)
@@ -220,6 +221,15 @@ async def test_sync_tasks_weekly_accepts_day_name(session_factory):
         cfg = await s.scalar(select(TaskConfig).where(
             TaskConfig.external_task_id == "weekly_named_day"))
         assert cfg.schedule_value == "3"                # число по-прежнему работает
+
+
+def test_moscow_to_utc_conversion():
+    from datetime import time as time_
+    from bot.services.google_sheets_service import _moscow_to_utc
+    assert _moscow_to_utc(time_(18, 0)) == time_(15, 0)
+    assert _moscow_to_utc(time_(10, 0)) == time_(7, 0)
+    assert _moscow_to_utc(time_(1, 0)) == time_(22, 0)    # переход через полночь
+    assert _moscow_to_utc(None) is None
 
 
 async def test_sync_tasks_weekly_accepts_multiple_days(session_factory):

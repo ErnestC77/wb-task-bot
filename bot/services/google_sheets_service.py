@@ -93,6 +93,23 @@ def _parse_time(value: object) -> time | None:
     return time(int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
 
 
+MOSCOW_UTC_OFFSET_HOURS = 3
+
+
+def _moscow_to_utc(t: time | None) -> time | None:
+    """Tasks_Config.due_time вводится по московскому времени (МСК = UTC+3,
+    без перехода на летнее/зимнее), а планировщик (scheduler_service.py)
+    целиком работает в naive-UTC — TaskConfig.time (реальный час создания
+    задачи) обязан быть в UTC, иначе задача уходит на 3 часа позже
+    задуманного. Не обрабатывает переход через полночь (due_time 00:00-02:59
+    МСК потребовал бы ещё и сдвига даты, которую здесь взять негде) — среди
+    реальных значений в таблице такого пока нет."""
+    if t is None:
+        return None
+    hour = (t.hour - MOSCOW_UTC_OFFSET_HOURS) % 24
+    return t.replace(hour=hour)
+
+
 _WEEKDAY_NAMES = {
     "понедельник": 0, "пн": 0,
     "вторник": 1, "вт": 1,
@@ -288,6 +305,15 @@ class GoogleSheetsService:
                         "schedule_value": _parse_schedule_value(
                             schedule_type, row.get("schedule_value")),
                         "schedule_interval": _int_or_none(row.get("schedule_interval")),
+                        # time — момент, когда планировщик реально создаёт/отправляет
+                        # задачу (compute_next_run, bot/services/scheduler_service.py,
+                        # работает в naive-UTC) — иначе задача всегда уходила бы в
+                        # 09:00 по умолчанию независимо от due_time в таблице.
+                        # due_time в самой таблице — московское время, поэтому для
+                        # time конвертируем в UTC; due_time (дедлайн, показывается
+                        # сотрудникам текстом) оставляем как есть — по МСК, как
+                        # написано в таблице, это и должно быть видно человеку.
+                        "time": _moscow_to_utc(_parse_time(row.get("due_time"))),
                         "due_time": _parse_time(row.get("due_time")),
                         "run_on_weekends": _truthy(row.get("run_on_weekends", "1")),
                         "skip_holidays": _truthy(row.get("skip_holidays", "0"), default=False),
