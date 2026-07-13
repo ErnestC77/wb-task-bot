@@ -191,6 +191,37 @@ async def test_sync_tasks_add_and_deactivate(session_factory):
         assert cfg.is_active is False
 
 
+async def test_sync_tasks_weekly_accepts_day_name(session_factory):
+    row = [{"external_task_id": "weekly_named_day", "title": "Отчёт",
+           "scenario": "simple", "schedule_type": "weekly",
+           "schedule_value": "Понедельник", "active": "1"}]
+    async with session_factory() as s:
+        svc = GoogleSheetsService(s, client=None)
+        await svc.sync_tasks(row, dry_run=False)
+        await s.commit()
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "weekly_named_day"))
+        assert cfg.schedule_value == "0"
+
+    row2 = [{**row[0], "schedule_value": "пт"}]
+    async with session_factory() as s:
+        svc = GoogleSheetsService(s, client=None)
+        await svc.sync_tasks(row2, dry_run=False)
+        await s.commit()
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "weekly_named_day"))
+        assert cfg.schedule_value == "4"
+
+    row3 = [{**row[0], "schedule_value": "3"}]
+    async with session_factory() as s:
+        svc = GoogleSheetsService(s, client=None)
+        await svc.sync_tasks(row3, dry_run=False)
+        await s.commit()
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "weekly_named_day"))
+        assert cfg.schedule_value == "3"                # число по-прежнему работает
+
+
 async def test_sync_all_dry_run_writes_no_business_data_but_logs_audit(session_factory):
     client = AsyncMock(spec=SheetsClient)
     client.read_rows = lambda sheet_name: (

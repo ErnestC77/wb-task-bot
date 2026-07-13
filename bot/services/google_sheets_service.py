@@ -93,6 +93,28 @@ def _parse_time(value: object) -> time | None:
     return time(int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
 
 
+_WEEKDAY_NAMES = {
+    "понедельник": 0, "пн": 0,
+    "вторник": 1, "вт": 1,
+    "среда": 2, "ср": 2,
+    "четверг": 3, "чт": 3,
+    "пятница": 4, "пт": 4,
+    "суббота": 5, "сб": 5,
+    "воскресенье": 6, "вс": 6,
+}
+
+
+def _parse_schedule_value(schedule_type: str, value: object) -> str | None:
+    """weekly принимает и число (0=понедельник), и русское название дня
+    ("понедельник"/"пн") — для остальных schedule_type значение не трогаем
+    (там либо число дня месяца, либо cron-выражение)."""
+    text = _str_or_none(value)
+    if text is None or schedule_type != ScheduleType.WEEKLY:
+        return text
+    day = _WEEKDAY_NAMES.get(text.strip().lower())
+    return str(day) if day is not None else text
+
+
 class GoogleSheetsService:
     def __init__(self, session: AsyncSession, client: "SheetsClient | None") -> None:
         self.session = session
@@ -250,6 +272,7 @@ class GoogleSheetsService:
                         continue
                     topic_key = _str_or_none(row.get("topic_key"))
                     topic = await topic_repo.get_by_key(topic_key) if topic_key else None
+                    schedule_type = _str_or_none(row.get("schedule_type")) or ScheduleType.DAILY
                     data = {
                         "external_task_id": external_task_id,
                         "title": str(row.get("title", "")),
@@ -257,8 +280,9 @@ class GoogleSheetsService:
                         "scenario": _str_or_none(row.get("scenario")) or TaskScenario.SIMPLE,
                         "responsible_role": _str_or_none(row.get("responsible_role")),
                         "topic_id": topic.id if topic else None,
-                        "schedule_type": _str_or_none(row.get("schedule_type")) or ScheduleType.DAILY,
-                        "schedule_value": _str_or_none(row.get("schedule_value")),
+                        "schedule_type": schedule_type,
+                        "schedule_value": _parse_schedule_value(
+                            schedule_type, row.get("schedule_value")),
                         "schedule_interval": _int_or_none(row.get("schedule_interval")),
                         "due_time": _parse_time(row.get("due_time")),
                         "run_on_weekends": _truthy(row.get("run_on_weekends", "1")),
