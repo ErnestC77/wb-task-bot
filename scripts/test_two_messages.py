@@ -1,7 +1,8 @@
-"""Разовая диагностика: отправить 2 тестовых задачи (не все 14), чтобы
+"""Разовая диагностика: отправить N тестовых задач (не все 14), чтобы
 проверить фиксы (HTML, упоминание, кнопки) без повторного спама всей группы.
 
-Запуск: python scripts/test_two_messages.py
+Запуск: python scripts/test_two_messages.py [external_task_id ...]
+Без аргументов — 2 задачи по умолчанию (EXTERNAL_IDS).
 """
 import asyncio
 import os
@@ -26,10 +27,11 @@ async def main() -> None:
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     bot = create_bot(settings.bot_token)
 
+    external_ids = sys.argv[1:] or EXTERNAL_IDS
     async with session_factory() as session:
         owner = (await session.execute(
             select(User).where(User.telegram_id == 910256253))).scalars().first()
-        for ext_id in EXTERNAL_IDS:
+        for ext_id in external_ids:
             cfg = (await session.execute(
                 select(TaskConfig).where(
                     TaskConfig.external_task_id == ext_id))).scalars().first()
