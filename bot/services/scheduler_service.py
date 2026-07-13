@@ -29,8 +29,10 @@ def compute_next_run(config: TaskConfig, after: datetime) -> datetime | None:
     elif st == ScheduleType.EVERY_N_DAYS:
         nxt = _at(after.date() + timedelta(days=config.schedule_interval or 1), config.time)
     elif st == ScheduleType.WEEKLY:
-        target = int(config.schedule_value or 0)
-        days = (target - after.weekday() - 1) % 7 + 1
+        # schedule_value: одно число (0=понедельник) или несколько через
+        # запятую ("0,2,4" — пн/ср/пт) — берём ближайший из перечисленных дней.
+        targets = [int(v) for v in str(config.schedule_value or "0").split(",") if v.strip()]
+        days = min((t - after.weekday() - 1) % 7 + 1 for t in targets)
         nxt = _at(after.date() + timedelta(days=days), config.time)
     elif st == ScheduleType.MONTHLY:
         target_day = int(config.schedule_value or 1)

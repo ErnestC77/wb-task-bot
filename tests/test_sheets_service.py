@@ -222,6 +222,19 @@ async def test_sync_tasks_weekly_accepts_day_name(session_factory):
         assert cfg.schedule_value == "3"                # число по-прежнему работает
 
 
+async def test_sync_tasks_weekly_accepts_multiple_days(session_factory):
+    row = [{"external_task_id": "weekly_multi_day", "title": "Отчёт",
+           "scenario": "simple", "schedule_type": "weekly",
+           "schedule_value": "понедельник, ср, 4", "active": "1"}]
+    async with session_factory() as s:
+        svc = GoogleSheetsService(s, client=None)
+        await svc.sync_tasks(row, dry_run=False)
+        await s.commit()
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "weekly_multi_day"))
+        assert cfg.schedule_value == "0,2,4"
+
+
 async def test_sync_all_dry_run_writes_no_business_data_but_logs_audit(session_factory):
     client = AsyncMock(spec=SheetsClient)
     client.read_rows = lambda sheet_name: (

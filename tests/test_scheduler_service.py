@@ -31,6 +31,14 @@ def test_daily_and_weekly():
     assert compute_next_run(c, datetime(2026, 7, 10, 9, 0)) == datetime(2026, 7, 13, 9, 0)
 
 
+def test_weekly_multiple_days_picks_nearest():
+    # 2026-07-10 09:00 — пятница. Дни пн/ср/пт: ближайший — понедельник 13.07.
+    c = cfg(schedule_type="weekly", schedule_value="0,2,4")
+    nxt = compute_next_run(c, datetime(2026, 7, 10, 9, 0))
+    assert nxt == datetime(2026, 7, 13, 9, 0)
+    assert nxt.weekday() == 0
+
+
 def test_monthly_clamps_to_month_end():
     c = cfg(schedule_type="monthly", schedule_value="31")
     nxt = compute_next_run(c, datetime(2026, 2, 1, 0, 0))

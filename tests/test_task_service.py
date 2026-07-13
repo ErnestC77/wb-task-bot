@@ -58,6 +58,45 @@ async def test_snapshot_frozen_after_setting_change(session):
     assert inst2.article_batch_size_snapshot == 30
 
 
+async def test_resolve_responsible_prefers_explicit_assignment(session):
+    cfg, valya = await make_config(session)          # responsible_user_id уже = valya
+    cfg.responsible_role = "manager_wb"               # даже если роль тоже задана
+    svc = TaskService(session)
+    resolved = await svc.resolve_responsible_user(cfg)
+    assert resolved.id == valya.id
+
+
+async def test_resolve_responsible_by_role_when_unassigned(session):
+    users = UserRepository(session)
+    oksana = await users.upsert(telegram_id=20, name="Оксана", role=Role.LOGISTIC)
+    cfg = await TaskRepository(session).upsert_config(dict(
+        external_task_id="logistics_task", title="Логистика", scenario="simple",
+        schedule_type="daily", responsible_role="logistic",
+        responsible_user_id=None, is_active=True))
+    await session.commit()
+    svc = TaskService(session)
+    resolved = await svc.resolve_responsible_user(cfg)
+    assert resolved.id == oksana.id
+
+    inst = await svc.create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+    assert inst.responsible_user_id == oksana.id
+    assert inst.responsible_name_snapshot == "Оксана"
+
+
+async def test_resolve_responsible_by_role_ambiguous_stays_unassigned(session):
+    users = UserRepository(session)
+    await users.upsert(telegram_id=21, name="Первый", role=Role.MANAGER_WB)
+    await users.upsert(telegram_id=22, name="Второй", role=Role.MANAGER_WB)
+    cfg = await TaskRepository(session).upsert_config(dict(
+        external_task_id="ambiguous_task", title="Задача", scenario="simple",
+        schedule_type="daily", responsible_role="manager_wb",
+        responsible_user_id=None, is_active=True))
+    await session.commit()
+    svc = TaskService(session)
+    resolved = await svc.resolve_responsible_user(cfg)
+    assert resolved is None                            # два кандидата — неоднозначно
+
+
 async def test_due_at_from_due_time(session):
     cfg, _ = await make_config(session)
     inst = await TaskService(session).create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))

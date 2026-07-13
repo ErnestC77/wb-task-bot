@@ -21,12 +21,32 @@ class TaskService:
         self.topics = TopicRepository(session)
         self.settings = SettingService(session)
 
-    async def build_snapshot(self, config: TaskConfig) -> dict:
+    async def resolve_responsible_user(self, config: TaskConfig) -> User | None:
+        """Явно назначенный через /admin config.responsible_user_id всегда в
+        приоритете. Если не назначен, но в Tasks_Config задан responsible_role
+        (текстовая колонка из Google Sheets) — авто-назначаем ТОЛЬКО если по
+        этой роли ровно один активный сотрудник; при 0 или нескольких
+        кандидатах остаётся неоднозначным, и задача остаётся без
+        ответственного (как раньше — responsible_role сама по себе ничего
+        не решает)."""
+        if config.responsible_user is not None:
+            return config.responsible_user
+        if not config.responsible_role:
+            return None
+        from bot.database.repositories.user_repository import UserRepository
+        candidates = await UserRepository(self.session).get_active_by_role(
+            config.responsible_role)
+        return candidates[0] if len(candidates) == 1 else None
+
+    async def build_snapshot(self, config: TaskConfig,
+                             responsible: User | None = None) -> dict:
         thread_id = None
         if config.topic_id:
             topic = await self.topics.get_by_id(config.topic_id)
             thread_id = topic.message_thread_id if topic else None
         is_check = config.scenario == TaskScenario.ARTICLE_CHECK
+        if responsible is None:
+            responsible = await self.resolve_responsible_user(config)
         receiver = config.question_receiver_user_id
         if receiver is None:
             default_receiver = int(await self.settings.get("questions.default_receiver_user_id"))
@@ -34,10 +54,9 @@ class TaskService:
         return dict(
             title_snapshot=config.title,
             description_snapshot=config.description,
-            responsible_name_snapshot=(config.responsible_user.name
-                                       if config.responsible_user else None),
-            responsible_telegram_id_snapshot=(config.responsible_user.telegram_id
-                                              if config.responsible_user else None),
+            responsible_name_snapshot=responsible.name if responsible else None,
+            responsible_telegram_id_snapshot=(
+                responsible.telegram_id if responsible else None),
             need_approval_snapshot=config.need_approval,
             approval_timeout_hours_snapshot=int(
                 await self.settings.get("approval.timeout_hours")),
@@ -57,9 +76,11 @@ class TaskService:
                                   scheduled_at: datetime) -> TaskInstance | None:
         due_at = (datetime.combine(scheduled_at.date(), config.due_time)
                   if config.due_time else scheduled_at + timedelta(hours=24))
-        snapshot = await self.build_snapshot(config)
+        responsible = await self.resolve_responsible_user(config)
+        snapshot = await self.build_snapshot(config, responsible)
         inst = await self.repo.create_instance_idempotent(
-            config, scheduled_at, due_at, snapshot)
+            config, scheduled_at, due_at, snapshot,
+            responsible_user_id=responsible.id if responsible else None)
         if inst is None:
             logger.info("Instance for config=%s at %s already exists", config.id, scheduled_at)
         return inst

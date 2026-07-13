@@ -105,14 +105,18 @@ _WEEKDAY_NAMES = {
 
 
 def _parse_schedule_value(schedule_type: str, value: object) -> str | None:
-    """weekly принимает и число (0=понедельник), и русское название дня
-    ("понедельник"/"пн") — для остальных schedule_type значение не трогаем
-    (там либо число дня месяца, либо cron-выражение)."""
+    """weekly принимает число (0=понедельник) и/или русское название дня
+    ("понедельник"/"пн"), а также несколько дней через запятую —
+    "понедельник, среда, пятница" или "пн,ср,пт" — сохраняются как "0,2,4"
+    (scheduler_service.compute_next_run берёт ближайший из них). Для
+    остальных schedule_type значение не трогаем (там либо число дня месяца,
+    либо cron-выражение)."""
     text = _str_or_none(value)
     if text is None or schedule_type != ScheduleType.WEEKLY:
         return text
-    day = _WEEKDAY_NAMES.get(text.strip().lower())
-    return str(day) if day is not None else text
+    parts = [p.strip() for p in text.split(",") if p.strip()]
+    resolved = [str(_WEEKDAY_NAMES.get(p.lower(), p)) for p in parts]
+    return ",".join(resolved)
 
 
 class GoogleSheetsService:

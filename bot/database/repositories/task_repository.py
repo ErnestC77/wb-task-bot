@@ -59,13 +59,21 @@ class TaskRepository:
     async def create_instance_idempotent(
         self, config: TaskConfig, scheduled_at: datetime,
         due_at: datetime | None, snapshot: dict,
+        responsible_user_id: int | None = ...,
     ) -> TaskInstance | None:
         # Идемпотентность держится на UniqueConstraint(config_id, scheduled_at)
         # у TaskInstance в models.py — это не тестовый фикс, а гарантия на
         # уровне схемы БД (IntegrityError ловится ниже как «дубль планового запуска»).
+        # responsible_user_id по умолчанию (Ellipsis, не передан вызывающим) —
+        # берём из config, как раньше; TaskService.create_instance_for передаёт
+        # его явно, т.к. может авто-подобрать по responsible_role (см.
+        # TaskService.resolve_responsible_user), что может отличаться от
+        # config.responsible_user_id.
+        if responsible_user_id is ...:
+            responsible_user_id = config.responsible_user_id
         inst = TaskInstance(
             config_id=config.id,
-            responsible_user_id=config.responsible_user_id,
+            responsible_user_id=responsible_user_id,
             topic_id=config.topic_id,
             scheduled_at=scheduled_at,
             scheduled_date=scheduled_at.date(),
