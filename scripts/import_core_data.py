@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import sys
+from datetime import date, datetime, time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -28,6 +29,22 @@ TABLES = [
     (SystemSetting, "system_settings"),
 ]
 
+_PARSERS = {datetime: datetime.fromisoformat, date: date.fromisoformat,
+           time: time.fromisoformat}
+
+
+def _deserialize_rows(model, rows: list[dict]) -> list[dict]:
+    py_types = {c.name: c.type.python_type for c in model.__table__.columns
+               if c.type.python_type in _PARSERS}
+    out = []
+    for row in rows:
+        fixed = dict(row)
+        for col, py_type in py_types.items():
+            if fixed.get(col) is not None:
+                fixed[col] = _PARSERS[py_type](fixed[col])
+        out.append(fixed)
+    return out
+
 
 async def main(path: str) -> None:
     with open(path, encoding="utf-8") as f:
@@ -43,7 +60,7 @@ async def main(path: str) -> None:
             rows = dump.get(name, [])
             if not rows:
                 continue
-            await session.execute(insert(model.__table__), rows)
+            await session.execute(insert(model.__table__), _deserialize_rows(model, rows))
             table = model.__table__.name
             await session.execute(text(
                 f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
