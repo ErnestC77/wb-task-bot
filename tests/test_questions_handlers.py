@@ -279,6 +279,8 @@ async def test_answer_flow_happy_path_via_handlers(session):
     await SettingService(session).set("questions.default_receiver_user_id",
                                       receiver.id, valya.id)
     await SettingService(session).set("questions.notify_asker_on_answer", True, valya.id)
+    inst.telegram_chat_id, inst.topic_snapshot = -100123, 5
+    await session.commit()
     bot = AsyncMock()
     bot.send_message.return_value = SimpleNamespace(message_id=1, chat=SimpleNamespace(id=99))
     q = await QuestionService(session, bot).ask(inst, valya, "?")
@@ -302,8 +304,10 @@ async def test_answer_flow_happy_path_via_handlers(session):
 
     fresh = await QuestionRepository(session).get(q.id)
     assert fresh.status == QuestionStatus.ANSWERED and fresh.answer_text == "Снижай цену"
-    # спрашивающий (valya) получил уведомление
-    assert any(c.kwargs.get("chat_id") == valya.telegram_id
+    # ответ ушёл в чат самой задачи (не личным сообщением спрашивающему —
+    # с ботом в личке работает только админ), с упоминанием valya
+    assert any(c.kwargs.get("chat_id") == inst.telegram_chat_id
+              and "Снижай цену" in c.kwargs.get("text", "")
               for c in message.bot.send_message.await_args_list)
 
 

@@ -12,7 +12,7 @@ from bot.database.repositories.question_repository import QuestionRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.keyboards.question_keyboards import answer_keyboard
 from bot.services.setting_service import SettingService
-from bot.utils.html_utils import html_escape
+from bot.utils.html_utils import html_escape, mention
 from bot.utils.logger import get_logger
 from bot.utils.message_templates import render_question_message
 
@@ -71,10 +71,15 @@ class QuestionService:
             article_check_item_id=item.id if item is not None else None,
             from_user_id=from_user.id, to_user_id=receiver.id,
             question_text=text, status=QuestionStatus.CREATED)
-        message = render_question_message(q, inst, item)
+        # В чат самой задачи (мента+топик), а не личным сообщением получателю —
+        # с ботом в личке будет работать только админ, остальные сотрудники
+        # DM с ним не открывали, и send_message в личку молча падал.
+        message = (render_question_message(q, inst, item) + "\n\n"
+                  f"Кому: {mention(receiver.telegram_id, receiver.name)}")
         try:
-            msg = await self.bot.send_message(chat_id=receiver.telegram_id, text=message,
-                                              reply_markup=answer_keyboard(q.id))
+            msg = await self.bot.send_message(
+                chat_id=inst.telegram_chat_id, message_thread_id=inst.topic_snapshot,
+                text=message, reply_markup=answer_keyboard(q.id))
             q.status = QuestionStatus.SENT
             q.delivery_status = DeliveryStatus.SENT
             q.telegram_chat_id, q.telegram_message_id = msg.chat.id, msg.message_id
@@ -110,11 +115,13 @@ class QuestionService:
             self.scheduler.remove_job(f"question_escalation:{question_id}")
         if bool(await self.settings.get("questions.notify_asker_on_answer")):
             asker = await self.users.get_by_id(q.from_user_id)
-            if asker is not None:
+            inst = await self.session.get(TaskInstance, q.task_instance_id)
+            if asker is not None and inst is not None and inst.telegram_chat_id is not None:
                 try:
                     await self.bot.send_message(
-                        chat_id=asker.telegram_id,
-                        text=f"💬 Ответ на ваш вопрос:\n{html_escape(text)}")
+                        chat_id=inst.telegram_chat_id, message_thread_id=inst.topic_snapshot,
+                        text=(f"💬 Ответ {mention(asker.telegram_id, asker.name)} "
+                             f"на вопрос:\n{html_escape(text)}"))
                 except Exception as exc:             # noqa: BLE001
                     logger.warning("Notify asker failed: %s", exc)
         await self.session.flush()

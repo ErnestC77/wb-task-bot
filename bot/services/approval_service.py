@@ -18,6 +18,7 @@ from bot.database.repositories.user_repository import UserRepository
 from bot.keyboards.approval_keyboards import approval_keyboard
 from bot.services.setting_service import SettingService
 from bot.services.task_service import TaskService
+from bot.utils.html_utils import bold
 from bot.utils.logger import get_logger
 from bot.utils.message_templates import render_approval_request
 
@@ -103,7 +104,8 @@ class ApprovalService:
             self._remove_auto_job(instance_id)
             await self.tasks.refresh_task_message(got)
             if bool(await self.settings.get("approval.notify_on_approve")):
-                await self._notify_responsible(got, "✅ Ваша задача подтверждена")
+                await self._notify_responsible(
+                    got, f"✅ Задача {bold(got.title_snapshot)} подтверждена")
         return got
 
     async def return_to_work(self, instance_id: int, actor: User,

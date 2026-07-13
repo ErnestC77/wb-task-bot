@@ -113,7 +113,7 @@ async def test_full_action_fsm_happy_path(session):
 
     message2 = AsyncMock()
     message2.from_user.id = valya.telegram_id
-    message2.text = "13.07.2026"
+    message2.text = (date.today() + timedelta(days=3)).strftime("%d.%m.%Y")
     await handle_action_next_check(message2, session, state)
     assert await state.get_state() is None                       # FSM очищен
 
@@ -122,7 +122,7 @@ async def test_full_action_fsm_happy_path(session):
     assert action.problem_name_snapshot == prob.name
     assert action.decision_name_snapshot == dec.name
     assert action.comment == "снизить ставку рекламы вручную"
-    assert action.next_check_date == date(2026, 7, 13)
+    assert action.next_check_date == date.today() + timedelta(days=3)
     message2.answer.assert_awaited()                              # возврат к пачке
 
 
@@ -155,7 +155,7 @@ async def test_action_fsm_skip_optional_comment(session):
 
     message2 = AsyncMock()
     message2.from_user.id = valya.telegram_id
-    message2.text = "13.07.2026"
+    message2.text = (date.today() + timedelta(days=3)).strftime("%d.%m.%Y")
     await handle_action_next_check(message2, session, state)
 
     action = (await session.execute(select(ArticleAction))).scalar_one()
