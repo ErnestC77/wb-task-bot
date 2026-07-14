@@ -194,3 +194,12 @@ class TaskRepository:
         return list(await self.session.scalars(
             select(TaskInstance).where(TaskInstance.delivery_status.in_(
                 [DeliveryStatus.PENDING, DeliveryStatus.FAILED, DeliveryStatus.RETRYING]))))
+
+    async def get_sent_unlogged(self) -> list[TaskInstance]:
+        """Часть Б: отправленные в Telegram, но ещё не выгруженные в лист
+        «Журнал отправок» (sheet_logged_at IS NULL)."""
+        return list(await self.session.scalars(
+            select(TaskInstance).where(
+                TaskInstance.delivery_status == DeliveryStatus.SENT,
+                TaskInstance.sheet_logged_at.is_(None))
+            .order_by(TaskInstance.message_sent_at)))

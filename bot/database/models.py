@@ -215,6 +215,8 @@ class TaskInstance(Base):
     last_delivery_error: Mapped[str | None] = mapped_column(Text)
     next_retry_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     message_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # выгружено в лист «Журнал отправок» (Часть Б) — защита от задваивания строк
+    sheet_logged_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     # snapshot конфигурации (10.5)
     title_snapshot: Mapped[str] = mapped_column(String(255))

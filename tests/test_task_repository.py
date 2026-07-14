@@ -60,3 +60,28 @@ async def test_auto_approve_only_from_waiting(session):
     got = await repo.transition_status(inst.id, [TaskStatus.WAITING_APPROVAL],
                                        TaskStatus.AUTO_APPROVED, None, "auto:approve")
     assert got is None                       # задача в created — auto-approve не применяется
+
+
+async def test_get_sent_unlogged_filters_status_and_flag(session):
+    """Часть Б: для «Журнала отправок» выбираются только SENT-инстансы, ещё
+    не выгруженные (sheet_logged_at IS NULL)."""
+    from datetime import datetime
+    from bot.database.models import DeliveryStatus
+    from bot.database.repositories.task_repository import TaskRepository
+    from bot.services.task_service import TaskService
+    from tests.test_task_service import make_config
+
+    cfg, _ = await make_config(session)
+    svc = TaskService(session)
+    sent = await svc.create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+    pending = await svc.create_instance_for(cfg, datetime(2026, 7, 11, 9, 0))
+    logged = await svc.create_instance_for(cfg, datetime(2026, 7, 12, 9, 0))
+    sent.delivery_status = DeliveryStatus.SENT
+    sent.message_sent_at = datetime(2026, 7, 10, 9, 1)
+    logged.delivery_status = DeliveryStatus.SENT
+    logged.message_sent_at = datetime(2026, 7, 12, 9, 1)
+    logged.sheet_logged_at = datetime(2026, 7, 12, 10, 0)   # уже выгружен
+    await session.commit()
+
+    rows = await TaskRepository(session).get_sent_unlogged()
+    assert [r.id for r in rows] == [sent.id]                # pending и logged — мимо
