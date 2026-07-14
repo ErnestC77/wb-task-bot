@@ -122,6 +122,12 @@ SETTINGS_DEFAULTS: list[tuple[str, object, str, str]] = [
     # delivery_log (2)
     ("delivery_log.enabled", False, "bool", "delivery_log"),
     ("delivery_log.interval_minutes", 60, "int", "delivery_log"),
+    # status_notifications (4)
+    ("status_notifications.enabled", False, "bool", "status_notifications"),
+    ("status_notifications.targets", ["owner"], "json", "status_notifications"),
+    ("status_notifications.interval_minutes", 5, "int", "status_notifications"),
+    ("status_notifications.statuses",
+     ["in_progress", "completed", "problem", "overdue"], "json", "status_notifications"),
     # internal (1)
     ("internal.settings_version", 1, "int", "internal"),
 ]

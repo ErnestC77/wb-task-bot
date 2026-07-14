@@ -139,6 +139,23 @@ def _defs() -> list[SettingDef]:
                    "Выгружать отправленные задачи в лист «Журнал отправок»"),
         SettingDef("delivery_log.interval_minutes", int, 60, "delivery_log",
                    "Интервал выгрузки журнала (минуты)", min_=5, max_=1440),
+        # --- status_notifications ---
+        SettingDef("status_notifications.enabled", bool, False, "status_notifications",
+                   "Уведомлять о смене статуса задач в Telegram"),
+        SettingDef("status_notifications.targets", object, ["owner"],
+                   "status_notifications",
+                   "Роли-получатели уведомлений о статусах (owner/partner)"),
+        SettingDef("status_notifications.interval_minutes", int, 5,
+                   "status_notifications",
+                   "Интервал проверки новых смен статуса (минуты)", min_=1, max_=60),
+        # Список уведомляемых статусов — настройка, НЕ хардкод (спека, ред.
+        # a3e6de6): default — те же 4, что предлагались фиксированными; owner
+        # может сузить/расширить список через кнопки бота (validate_json_value,
+        # как reminders.targets). Редактирование через Google-таблицу — вне рамок.
+        SettingDef("status_notifications.statuses", object,
+                   ["in_progress", "completed", "problem", "overdue"],
+                   "status_notifications",
+                   "Какие смены статуса шлют уведомление (значения TaskStatus)"),
         # --- internal ---
         SettingDef("internal.settings_version", int, 1, "internal", is_editable=False),
     ]

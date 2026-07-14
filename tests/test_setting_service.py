@@ -109,11 +109,11 @@ _TYPE_MAP = {"int": int, "bool": bool, "str": str, "json": object}
 
 def test_registry_matches_seed_migration_exactly():
     """SETTINGS_REGISTRY — единственный источник истины для допустимых ключей.
-    Он должен ТОЧНО (88 ключей) совпадать по составу, дефолтам, типам и категориям
+    Он должен ТОЧНО (92 ключа) совпадать по составу, дефолтам, типам и категориям
     с тем, что вставляет seed-миграция 0002_seed_defaults.py."""
     seed = _load_seed_defaults()
-    assert len(seed) == 88
-    assert len(SETTINGS_REGISTRY) == 88
+    assert len(seed) == 92
+    assert len(SETTINGS_REGISTRY) == 92
 
     seed_keys = {key for key, _, _, _ in seed}
     assert set(SETTINGS_REGISTRY.keys()) == seed_keys
@@ -130,7 +130,7 @@ def test_registry_matches_seed_migration_exactly():
     assert counts_by_category == {
         "general": 14, "article_check": 19, "approval": 10, "reminders": 14,
         "questions": 8, "reports": 12, "sync": 8, "internal": 1,
-        "delivery_log": 2,
+        "delivery_log": 2, "status_notifications": 4,
     }
 
 
@@ -150,3 +150,26 @@ async def test_delivery_log_settings_registered_with_defaults(session):
 def test_delivery_log_category_has_title():
     from bot.keyboards.admin.settings import CATEGORY_TITLES
     assert CATEGORY_TITLES["delivery_log"] == "Журнал отправок"
+
+
+async def test_status_notifications_settings_registered_with_defaults(session):
+    """Часть Г: настройки уведомлений о статусах — обычные карточки в общем
+    реестре, отдельная категория status_notifications. Список уведомляемых
+    статусов — настройка с default из 4 статусов (спека, ред. a3e6de6)."""
+    from bot.services.setting_service import SETTINGS_REGISTRY, SettingService
+
+    svc = SettingService(session)
+    assert await svc.get("status_notifications.enabled") is False
+    assert await svc.get("status_notifications.targets") == ["owner"]
+    assert await svc.get("status_notifications.interval_minutes") == 5
+    assert await svc.get("status_notifications.statuses") == [
+        "in_progress", "completed", "problem", "overdue"]
+    d = SETTINGS_REGISTRY["status_notifications.interval_minutes"]
+    assert (d.min_, d.max_, d.category) == (1, 60, "status_notifications")
+    assert SETTINGS_REGISTRY["status_notifications.statuses"].value_type is object
+    assert SETTINGS_REGISTRY["status_notifications.enabled"].category == "status_notifications"
+
+
+def test_status_notifications_category_has_title():
+    from bot.keyboards.admin.settings import CATEGORY_TITLES
+    assert CATEGORY_TITLES["status_notifications"] == "Уведомления о статусах"
