@@ -85,3 +85,23 @@ async def test_get_sent_unlogged_filters_status_and_flag(session):
 
     rows = await TaskRepository(session).get_sent_unlogged()
     assert [r.id for r in rows] == [sent.id]                # pending и logged — мимо
+
+
+async def test_get_unnotified_status_logs_filters_status_and_flag(session):
+    """Часть Г: для уведомлений выбираются только записи с new_status из
+    переданного списка, по которым уведомление ещё не отправлено
+    (owner_notified_at IS NULL)."""
+    repo, cfg, inst, user, ts, snapshot = await make_instance(session)
+    fresh = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.take",
+                    old_status="created", new_status="in_progress")
+    done = TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                   old_status="in_progress", new_status="overdue",
+                   owner_notified_at=datetime(2026, 7, 10, 10, 0))   # уже уведомлён
+    other = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.done",
+                    old_status="in_progress", new_status="waiting_approval")
+    session.add_all([fresh, done, other])
+    await session.commit()
+
+    rows = await repo.get_unnotified_status_logs(
+        ["in_progress", "completed", "problem", "overdue"])
+    assert [r.id for r in rows] == [fresh.id]              # done и other — мимо

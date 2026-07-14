@@ -251,6 +251,10 @@ class TaskLog(Base):
     new_status: Mapped[str | None] = mapped_column(String(24))
     comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Telegram-уведомление о смене статуса отправлено (Часть Г) — защита от
+    # повторных уведомлений; идемпотентность НЕЗАВИСИМА от sheet_logged_at
+    # Части Д (два разных потребителя одной и той же записи TaskLog).
+    owner_notified_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Article(TimestampMixin, Base):

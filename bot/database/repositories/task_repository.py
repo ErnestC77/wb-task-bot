@@ -203,3 +203,14 @@ class TaskRepository:
                 TaskInstance.delivery_status == DeliveryStatus.SENT,
                 TaskInstance.sheet_logged_at.is_(None))
             .order_by(TaskInstance.message_sent_at)))
+
+    async def get_unnotified_status_logs(self, statuses: list[str]) -> list[TaskLog]:
+        """Часть Г: записи TaskLog с new_status из переданного списка, по
+        которым Telegram-уведомление ещё не отправлялось (owner_notified_at
+        IS NULL). Список статусов передаёт вызывающий job — значение настройки
+        status_notifications.statuses (bot/services/status_notification_service.py)."""
+        return list(await self.session.scalars(
+            select(TaskLog).where(
+                TaskLog.new_status.in_(statuses),
+                TaskLog.owner_notified_at.is_(None))
+            .order_by(TaskLog.id)))
