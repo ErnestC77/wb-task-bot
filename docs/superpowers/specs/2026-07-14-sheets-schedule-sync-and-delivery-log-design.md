@@ -94,17 +94,17 @@
 **Что делаем:** новое фоновое задание (не мгновенно, с задержкой в несколько минут — по решению пользователя в диалоге), по аналогии с `delivery_log_job`/`auto_sync_job`:
 
 1. **Новое поле** `TaskLog.owner_notified_at: datetime | None` (Alembic-миграция) — защита от повторных уведомлений по одной и той же записи.
-2. **Новые настройки:** `status_notifications.enabled` (bool, default `False`), `status_notifications.targets` (тип как у `reminders.escalation_targets` — список ролей, default `["owner"]`), `status_notifications.interval_minutes` (int, default `5`, min `1`, max `60` — короче, чем у `sync`/`delivery_log`, т.к. уведомление о статусе не терпит часового опоздания). Категория настроек — новая `"status_notifications"`.
-3. **Уведомляемые статусы — фиксированный список, не настройка** (YAGNI, по решению пользователя): `{IN_PROGRESS, COMPLETED, PROBLEM, OVERDUE}` — только эти 4 из 10 возможных.
+2. **Новые настройки:** `status_notifications.enabled` (bool, default `False`), `status_notifications.targets` (тип как у `reminders.escalation_targets` — список ролей, default `["owner"]`), `status_notifications.interval_minutes` (int, default `5`, min `1`, max `60` — короче, чем у `sync`/`delivery_log`, т.к. уведомление о статусе не терпит часового опоздания), **`status_notifications.statuses`** (тип `object`/список строк — значений `TaskStatus`, default `["in_progress", "completed", "problem", "overdue"]`) — какие именно смены статуса шлют уведомление; owner редактирует список так же, как остальные `object`-настройки (`validate_json_value`, тот же путь, что у `reminders.targets`/`reminders.escalation_targets` — **через кнопки бота, НЕ через саму Google-таблицу**, по решению пользователя в диалоге). Категория настроек — новая `"status_notifications"`.
+3. **Уведомляемые статусы теперь настраиваемы** (пересмотрено в диалоге: изначально предполагался фиксированный список из 4 — `IN_PROGRESS/COMPLETED/PROBLEM/OVERDUE`; эти же 4 остаются значением ПО УМОЛЧАНИЮ, но owner может расширить/сузить список через `status_notifications.statuses`, вплоть до всех 10 возможных статусов).
 4. **Новый джоб** `status_notification_job(bot, session_factory)`:
    - Ничего не делает, если `status_notifications.enabled=False`.
-   - Выбирает `TaskLog`, где `new_status IN (IN_PROGRESS, COMPLETED, PROBLEM, OVERDUE)` и `owner_notified_at IS NULL`.
+   - Выбирает `TaskLog`, где `new_status IN <текущее значение status_notifications.statuses>` и `owner_notified_at IS NULL` (список читается из настроек при каждом прогоне джоба — не хардкодится).
    - Для каждой записи: подтягивает `TaskInstance.title_snapshot` (по `task_instance_id`), при наличии `user_id` — имя пользователя, сменившего статус (иначе «система»/`action`, например `"auto:overdue"`), формирует текст вида `"📌 {title}: {old_status} → {new_status}"` (+ кто, если известно).
    - Отправляет каждому пользователю из ролей в `status_notifications.targets` (через `UserRepository.get_active_by_role`, тот же паттерн, что в `reminder_service.py:69,95`).
    - Проставляет `owner_notified_at = datetime.utcnow()`, коммитит.
    - Ошибки отправки в Telegram по одному получателю не должны прерывать обработку остальных (try/except вокруг `bot.send_message` на каждого адресата, как в `overdue_job`, `reminder_service.py`).
 5. **`SchedulerService.register_status_notification_job()`** — по образцу `register_sync_job()`/`register_delivery_log_job()`.
-6. **`SCHEDULER_AFFECTING`** дополняется `"status_notifications.enabled"`, `"status_notifications.interval_minutes"`; в `apply_setting_input` — ветка для `status_notifications.*` → `register_status_notification_job()`.
+6. **`SCHEDULER_AFFECTING`** дополняется `"status_notifications.enabled"`, `"status_notifications.interval_minutes"` (`status_notifications.statuses` НЕ влияет на регистрацию джоба, только на его фильтр-запрос — не должна быть в `SCHEDULER_AFFECTING`); в `apply_setting_input` — ветка для `status_notifications.*` → `register_status_notification_job()`.
 7. **Регистрация при старте** — `register_status_notification_job()` вызывается в `bot/main.py` рядом с остальными `register_*_job()`.
 
 ## Часть Д — новая вкладка «История статусов» в Google Sheets
@@ -149,7 +149,7 @@ self.scheduler.add_job(
 - `apply_setting_input`: изменение `delivery_log.enabled`/`delivery_log.interval_minutes` вызывает `register_delivery_log_job()` (по аналогии с существующим тестом для `sync.*`).
 - `task_service.create_instance_for`: `due_days_offset=2` даёт `due_at` на 2 дня позже `scheduled_at.date()`; `due_days_offset=0` (или default) — прежнее поведение (тот же день).
 - `schedules.py`: `due_days_offset` редактируется через кнопки бота, валидация отклоняет отрицательные и >30.
-- `status_notification_job`: `TaskLog` с `new_status="in_progress"`/`"completed"`/`"problem"`/`"overdue"` порождает уведомление владельцам из `status_notifications.targets`, помечается `owner_notified_at`, повторный прогон не дублирует; `TaskLog` с прочими статусами (например `"waiting_approval"`) уведомление НЕ порождает.
+- `status_notification_job`: с дефолтным `status_notifications.statuses` `TaskLog` с `new_status="in_progress"`/`"completed"`/`"problem"`/`"overdue"` порождает уведомление владельцам из `status_notifications.targets`, помечается `owner_notified_at`, повторный прогон не дублирует; `TaskLog` со статусами вне списка (например `"waiting_approval"`) уведомление НЕ порождает. Отдельный тест: сузить `status_notifications.statuses` до `["completed"]` — убедиться, что `"in_progress"` перестаёт уведомлять, а `"completed"` продолжает; расширить список, добавив, например, `"waiting_approval"` — убедиться, что теперь уведомляет и он.
 - `status_history_job`: КАЖДАЯ запись `TaskLog` (без фильтра по статусу) попадает в лист «История статусов» ровно один раз; проверить отдельно запись с `user_id is None` (авто-переход, например overdue) — колонка «Кто» показывает `action`, а не падает на `None`.
 - Регрессионный тест на фикс Части Е: создать `TaskInstance`, задать `reminders.overdue_after_hours` в нестандартное значение (например `2`), убедиться, что зарегистрированный job `overdue:{id}` имеет `run_date = scheduled_at + timedelta(hours=2)`, а не жёстко `+24`.
 
@@ -160,7 +160,7 @@ self.scheduler.add_job(
 3. Повторные прогоны `delivery_log_job` не создают дублирующихся строк.
 4. Недоступность Google Sheets API не влияет на отправку сообщений в Telegram и не приводит к падению планировщика.
 5. Время отправки (`time`) и дедлайн (`due_time`/`due_days_offset`) задаются в Google-таблице независимо друг от друга, дедлайн может быть на день позже дня отправки.
-6. При включённом `status_notifications.enabled` owner получает Telegram-уведомление в течение `status_notifications.interval_minutes` после того, как задача перешла в `in_progress`/`completed`/`problem`/`overdue` — не чаще одного раза на переход.
+6. При включённом `status_notifications.enabled` owner получает Telegram-уведомление в течение `status_notifications.interval_minutes` после того, как задача перешла в один из статусов из `status_notifications.statuses` (по умолчанию `in_progress`/`completed`/`problem`/`overdue`, редактируется через админ-панель бота) — не чаще одного раза на переход.
 7. При включённом `status_history_log.enabled` каждая смена статуса любой задачи появляется строкой в листе «История статусов» в течение `status_history_log.interval_minutes`.
 8. После фикса Части Е изменение `reminders.overdue_after_hours` реально сдвигает момент перехода задачи в `OVERDUE` (проверяется через фактическое время регистрации `overdue:{id}` job'а).
 6. Существующие задачи без `due_days_offset` в таблице продолжают работать как раньше (дедлайн в день отправки).
