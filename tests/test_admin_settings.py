@@ -305,3 +305,31 @@ async def test_delivery_log_settings_rebuild_delivery_log_job(session):
     assert ok is True
     scheduler_svc.register_delivery_log_job.assert_awaited()
     scheduler_svc.register_sync_job.assert_not_awaited()
+
+
+async def test_status_notifications_settings_rebuild_status_notification_job(session):
+    """Часть Г: правка status_notifications.enabled/.interval_minutes через
+    общий редактор настроек пересобирает ИМЕННО status_notifications-job;
+    statuses — НЕ scheduler-affecting (влияет только на фильтр job'а)."""
+    cfg, valya = await make_config(session)
+    from bot.handlers.admin.settings import SCHEDULER_AFFECTING, apply_setting_input
+
+    assert "status_notifications.enabled" in SCHEDULER_AFFECTING
+    assert "status_notifications.interval_minutes" in SCHEDULER_AFFECTING
+    assert "status_notifications.statuses" not in SCHEDULER_AFFECTING
+
+    scheduler_svc = AsyncMock()
+    ok, _ = await apply_setting_input(session, valya,
+                                      "status_notifications.interval_minutes",
+                                      "10", scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_status_notification_job.assert_awaited()
+    scheduler_svc.register_sync_job.assert_not_awaited()
+    scheduler_svc.register_delivery_log_job.assert_not_awaited()
+
+    # statuses сохраняется без пересборки каких-либо job'ов
+    scheduler_svc.reset_mock()
+    ok, _ = await apply_setting_input(session, valya, "status_notifications.statuses",
+                                      '["completed"]', scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_status_notification_job.assert_not_awaited()

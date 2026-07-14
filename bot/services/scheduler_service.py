@@ -200,6 +200,26 @@ class SchedulerService:
                                    args=[self.bot, self.session_factory],
                                    id="delivery_log", misfire_grace_time=GRACE)
 
+    async def register_status_notification_job(self) -> None:
+        """Часть Г: по образцу register_sync_job/register_delivery_log_job —
+        снимает job "status_notifications" и, если
+        status_notifications.enabled=True, регистрирует status_notification_job
+        с интервалом status_notifications.interval_minutes. Явный remove_job
+        перед add_job — см. комментарий в register_report_job (до
+        scheduler.start() replace_existing не заменяет, а копит job'ы)."""
+        from bot.services.setting_service import SettingService
+        from bot.services.status_notification_service import status_notification_job
+        async with self.session_factory() as session:
+            settings = SettingService(session)
+            enabled = bool(await settings.get("status_notifications.enabled"))
+            minutes = int(await settings.get("status_notifications.interval_minutes"))
+        if self.scheduler.get_job("status_notifications"):
+            self.scheduler.remove_job("status_notifications")
+        if enabled:
+            self.scheduler.add_job(status_notification_job, "interval", minutes=minutes,
+                                   args=[self.bot, self.session_factory],
+                                   id="status_notifications", misfire_grace_time=GRACE)
+
 
 async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     from bot.database.repositories.task_repository import TaskRepository
@@ -230,4 +250,5 @@ async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     await svc.register_report_job()
     await svc.register_sync_job()
     await svc.register_delivery_log_job()
+    await svc.register_status_notification_job()
     return scheduler

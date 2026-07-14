@@ -205,3 +205,54 @@ async def test_setup_scheduler_registers_delivery_log_job(session_factory):
         await s.commit()
     scheduler = await setup_scheduler(AsyncMock(), session_factory)
     assert scheduler.get_job("delivery_log") is not None
+
+
+async def test_register_status_notification_job_enabled_interval_no_duplicates(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", True,
+                                    actor_user_id=None)
+        await SettingService(s).set("status_notifications.interval_minutes", 10,
+                                    actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    for _ in range(3):                                 # идемпотентно, без дублей
+        await svc.register_status_notification_job()
+    jobs = [j for j in scheduler.get_jobs() if j.id == "status_notifications"]
+    assert len(jobs) == 1
+    assert jobs[0].trigger.interval.total_seconds() == 10 * 60
+
+
+async def test_register_status_notification_job_disabled_removes_job(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_status_notification_job()
+    assert scheduler.get_job("status_notifications") is not None
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", False,
+                                    actor_user_id=None)
+        await s.commit()
+    await svc.register_status_notification_job()
+    assert scheduler.get_job("status_notifications") is None   # выключили — job снят
+
+
+async def test_setup_scheduler_registers_status_notification_job(session_factory):
+    from bot.services.scheduler_service import setup_scheduler
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+    scheduler = await setup_scheduler(AsyncMock(), session_factory)
+    assert scheduler.get_job("status_notifications") is not None
