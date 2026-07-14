@@ -489,14 +489,15 @@ async def test_manual_run_creates_instance_and_sends_message(session):
     bot.send_message.return_value = AsyncMock(message_id=5, chat=AsyncMock(id=-100))
     scheduler_svc = AsyncMock()
     scheduler_svc.scheduler = AsyncMock()
-    scheduler_svc.register_instance_jobs = MagicMock()   # реальный метод синхронный, не awaited
+    # register_instance_jobs теперь async (Часть Е) — AsyncMock сам создаёт
+    # awaitable-атрибут, отдельный MagicMock больше не нужен
 
     inst = await manual_run_config(session, bot, scheduler_svc, owner, cfg.id)
     await session.commit()
 
     assert inst is not None
     bot.send_message.assert_awaited()
-    scheduler_svc.register_instance_jobs.assert_called_once_with(inst)
+    scheduler_svc.register_instance_jobs.assert_awaited_once_with(inst, session=session)
 
     from sqlalchemy import select
     from bot.database.models import AdminAuditLog

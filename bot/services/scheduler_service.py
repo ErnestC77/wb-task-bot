@@ -77,7 +77,7 @@ class SchedulerService:
             if inst is not None:
                 await DeliveryService(session, self.bot, self.scheduler
                                       ).send_task_message(inst)
-                self.register_instance_jobs(inst)
+                await self.register_instance_jobs(inst, session=session)
             try:
                 config.next_run_at = compute_next_run(config, scheduled_at)
             except Exception:
@@ -123,8 +123,34 @@ class SchedulerService:
                 self.scheduler.remove_job(job_id)
             self.register_config_job(config)
 
-    def register_instance_jobs(self, inst) -> None:
+    async def register_instance_jobs(self, inst, session=None) -> None:
+        """Регистрирует remind1/remind2/overdue job'ы инстанса.
+
+        Часть Е (bugfix): срок overdue-джоба раньше был жёстко закодирован
+        (+24 часа), настройка reminders.overdue_after_hours игнорировалась —
+        совпадение хардкода с её default'ом (24) маскировало баг. Теперь
+        настройка читается здесь.
+
+        `session`: если вызывающий код уже находится внутри открытой
+        транзакции (run_config, manual_run_config, reregister_reminders — все
+        трое получают TaskInstance ДО коммита), он обязан передать её сюда.
+        На SQLite (тесты, единое соединение через StaticPool) открытие ЕЩЁ
+        одной сессии через session_factory() поверх незакоммиченной внешней
+        транзакции падает `OperationalError: cannot start a transaction
+        within a transaction` — найдено регрессией test_run_config_idempotent
+        при первой реализации этого бага-фикса. Без активной внешней
+        транзакции (например, в тестах, вызывающих этот метод напрямую)
+        session не передаётся — тогда открывается собственная (тот же
+        паттерн, что register_report_job/rebuild_config_job)."""
         from bot.services.reminder_service import reminder_job, overdue_job
+        from bot.services.setting_service import SettingService
+        if session is not None:
+            overdue_hours = int(await SettingService(session).get(
+                "reminders.overdue_after_hours"))
+        else:
+            async with self.session_factory() as own_session:
+                overdue_hours = int(await SettingService(own_session).get(
+                    "reminders.overdue_after_hours"))
         base = inst.scheduled_at
         if inst.remind_after_hours_snapshot:
             self.scheduler.add_job(
@@ -139,7 +165,7 @@ class SchedulerService:
                 args=[inst.id, 2, self.bot, self.session_factory, self.scheduler],
                 id=f"remind2:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
         self.scheduler.add_job(
-            overdue_job, "date", run_date=base + timedelta(hours=24),
+            overdue_job, "date", run_date=base + timedelta(hours=overdue_hours),
             args=[inst.id, self.bot, self.session_factory],
             id=f"overdue:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
 

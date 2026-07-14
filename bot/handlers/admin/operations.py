@@ -154,7 +154,7 @@ async def reregister_reminders(session, actor, instance_id: int, scheduler_svc) 
     if inst is None or inst.status not in OPEN_STATUSES:
         raise ValueError("Напоминания можно перерегистрировать только у открытой задачи")
     if scheduler_svc is not None:
-        scheduler_svc.register_instance_jobs(inst)
+        await scheduler_svc.register_instance_jobs(inst, session=session)
     await AuditService(session).log(actor.id, "reminders.reregister",
                                     entity_type="task_instance", entity_id=str(instance_id))
 

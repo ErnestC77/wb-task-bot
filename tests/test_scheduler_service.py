@@ -307,3 +307,60 @@ async def test_setup_scheduler_registers_status_history_job(session_factory):
         await s.commit()
     scheduler = await setup_scheduler(AsyncMock(), session_factory)
     assert scheduler.get_job("status_history") is not None
+
+
+async def test_register_instance_jobs_overdue_uses_setting(session_factory):
+    """Часть Е (регрессия): overdue:{id} планируется через
+    reminders.overdue_after_hours (здесь 2), а не жёстко +24 часа."""
+    from datetime import timedelta
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=7, name="Валя",
+                                              role=Role.MANAGER_WB)
+        repo = TaskRepository(s)
+        cfg = await repo.upsert_config(dict(
+            external_task_id="overdue_from_setting", title="Проверка",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=user.id, is_active=True))
+        inst = await repo.create_instance_idempotent(
+            cfg, datetime(2026, 7, 10, 9, 0), None,
+            dict(title_snapshot="Проверка", scenario_snapshot="simple"))
+        await SettingService(s).set("reminders.overdue_after_hours", 2,
+                                    actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler(timezone="UTC")     # как в проде (setup_scheduler)
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_instance_jobs(inst)
+
+    job = scheduler.get_job(f"overdue:{inst.id}")
+    assert job is not None
+    assert job.trigger.run_date.replace(tzinfo=None) == \
+        datetime(2026, 7, 10, 9, 0) + timedelta(hours=2)     # НЕ +24
+
+
+async def test_register_instance_jobs_overdue_default_24(session_factory):
+    """Обратная совместимость: без явной настройки — прежние 24 часа
+    (default реестра reminders.overdue_after_hours)."""
+    from datetime import timedelta
+
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=8, name="Валя",
+                                              role=Role.MANAGER_WB)
+        repo = TaskRepository(s)
+        cfg = await repo.upsert_config(dict(
+            external_task_id="overdue_default", title="Проверка",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=user.id, is_active=True))
+        inst = await repo.create_instance_idempotent(
+            cfg, datetime(2026, 7, 10, 9, 0), None,
+            dict(title_snapshot="Проверка", scenario_snapshot="simple"))
+        await s.commit()
+
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_instance_jobs(inst)
+    job = scheduler.get_job(f"overdue:{inst.id}")
+    assert job.trigger.run_date.replace(tzinfo=None) == \
+        datetime(2026, 7, 10, 9, 0) + timedelta(hours=24)

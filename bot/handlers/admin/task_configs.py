@@ -150,7 +150,7 @@ async def manual_run_config(session, bot, scheduler_svc, actor: User,
         scheduler = scheduler_svc.scheduler if scheduler_svc is not None else None
         await DeliveryService(session, bot, scheduler).send_task_message(inst)
         if scheduler_svc is not None:
-            scheduler_svc.register_instance_jobs(inst)
+            await scheduler_svc.register_instance_jobs(inst, session=session)
     await AuditService(session).log(
         actor.id, "task_config.manual_run", entity_type="task_config",
         entity_id=str(config_id), result="ok" if inst is not None else "duplicate")
