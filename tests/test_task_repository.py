@@ -105,3 +105,23 @@ async def test_get_unnotified_status_logs_filters_status_and_flag(session):
     rows = await repo.get_unnotified_status_logs(
         ["in_progress", "completed", "problem", "overdue"])
     assert [r.id for r in rows] == [fresh.id]              # done и other — мимо
+
+
+async def test_get_unlogged_status_logs_no_status_filter(session):
+    """Часть Д: для «Истории статусов» выбираются ВСЕ записи TaskLog (без
+    фильтра по статусу) с sheet_logged_at IS NULL — независимо от флага
+    owner_notified_at Части Г (два потребителя, две независимые пометки)."""
+    repo, cfg, inst, user, ts, snapshot = await make_instance(session)
+    any_status = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.done",
+                         old_status="in_progress", new_status="waiting_approval")
+    notified = TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                       old_status="created", new_status="overdue",
+                       owner_notified_at=datetime(2026, 7, 11, 9, 0))  # флаг Г не мешает
+    logged = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.take",
+                     old_status="created", new_status="in_progress",
+                     sheet_logged_at=datetime(2026, 7, 10, 10, 0))     # уже выгружена
+    session.add_all([any_status, notified, logged])
+    await session.commit()
+
+    rows = await repo.get_unlogged_status_logs()
+    assert [r.id for r in rows] == [any_status.id, notified.id]

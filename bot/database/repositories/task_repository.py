@@ -214,3 +214,11 @@ class TaskRepository:
                 TaskLog.new_status.in_(statuses),
                 TaskLog.owner_notified_at.is_(None))
             .order_by(TaskLog.id)))
+
+    async def get_unlogged_status_logs(self) -> list[TaskLog]:
+        """Часть Д: ВСЕ записи TaskLog (без фильтра по статусу — полная
+        история), ещё не выгруженные в лист «История статусов»
+        (sheet_logged_at IS NULL)."""
+        return list(await self.session.scalars(
+            select(TaskLog).where(TaskLog.sheet_logged_at.is_(None))
+            .order_by(TaskLog.id)))

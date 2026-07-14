@@ -255,6 +255,11 @@ class TaskLog(Base):
     # повторных уведомлений; идемпотентность НЕЗАВИСИМА от sheet_logged_at
     # Части Д (два разных потребителя одной и той же записи TaskLog).
     owner_notified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # выгружено в лист «История статусов» (Часть Д) — идемпотентность
+    # status_history_job. НЕ путать с owner_notified_at выше (Часть Г,
+    # Telegram-уведомления) и с TaskInstance.sheet_logged_at (Часть Б,
+    # «Журнал отправок» — другая таблица и другой лист).
+    sheet_logged_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Article(TimestampMixin, Base):
