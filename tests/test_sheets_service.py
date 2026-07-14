@@ -405,3 +405,42 @@ async def test_register_sync_job_passes_scheduler_service_to_job(session_factory
     assert job is not None
     assert len(job.args) == 3
     assert job.args[2] is svc
+
+
+def _client_with_fake_spreadsheet(fake) -> SheetsClient:
+    """SheetsClient без __init__ (реальный конструктор ходит в Google API);
+    тесты подставляют фейковый gspread-Spreadsheet напрямую — тот же принцип
+    «тонкая обёртка подменяется фейком», что и для read_rows."""
+    client = SheetsClient.__new__(SheetsClient)
+    client._spreadsheet = fake
+    return client
+
+
+def test_scopes_allow_write():
+    from bot.services.google_sheets_service import SCOPES
+    assert SCOPES == ["https://www.googleapis.com/auth/spreadsheets"]
+
+
+def test_append_rows_appends_to_existing_sheet():
+    ws = MagicMock()
+    fake = MagicMock()
+    fake.worksheet.return_value = ws
+    client = _client_with_fake_spreadsheet(fake)
+    client.append_rows("Журнал отправок", [["Задача 1", "Товары",
+                                            "10.07.2026 09:01", "10.07.2026 12:00"]])
+    ws.append_rows.assert_called_once_with(
+        [["Задача 1", "Товары", "10.07.2026 09:01", "10.07.2026 12:00"]])
+    fake.add_worksheet.assert_not_called()
+
+
+def test_append_rows_creates_missing_sheet_with_header():
+    import gspread
+    ws = MagicMock()
+    fake = MagicMock()
+    fake.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("нет листа")
+    fake.add_worksheet.return_value = ws
+    client = _client_with_fake_spreadsheet(fake)
+    client.append_rows("Журнал отправок", [["a", "b", "c", "d"]])
+    ws.append_row.assert_called_once_with(
+        ["Задача", "Чат/тема", "Время отправки", "Дедлайн"])
+    ws.append_rows.assert_called_once_with([["a", "b", "c", "d"]])

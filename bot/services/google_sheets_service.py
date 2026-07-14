@@ -34,7 +34,9 @@ from bot.services.setting_service import SettingService
 from bot.utils.logger import get_logger
 
 logger = get_logger(__name__)
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+# Часть Б: полный scope вместо .readonly — «Журнал отправок» пишет в таблицу.
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+DELIVERY_LOG_HEADER = ["Задача", "Чат/тема", "Время отправки", "Дедлайн"]
 
 
 @dataclass
@@ -61,6 +63,17 @@ class SheetsClient:
 
     def read_rows(self, sheet_name: str) -> list[dict]:
         return self._spreadsheet.worksheet(sheet_name).get_all_records()
+
+    def append_rows(self, sheet_name: str, rows: list[list]) -> None:
+        """Дописывает строки в лист; если листа нет — создаёт его и пишет
+        первой строкой заголовок DELIVERY_LOG_HEADER (Часть Б)."""
+        try:
+            ws = self._spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = self._spreadsheet.add_worksheet(
+                title=sheet_name, rows=1, cols=len(DELIVERY_LOG_HEADER))
+            ws.append_row(DELIVERY_LOG_HEADER)
+        ws.append_rows(rows)
 
 
 class _DryRunRollback(Exception):
