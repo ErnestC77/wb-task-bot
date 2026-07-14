@@ -8,7 +8,7 @@ from bot.database.models import AdminAuditLog, Article, TaskConfig, Topic, User
 from bot.database.repositories.audit_repository import AuditRepository
 from bot.services.google_sheets_service import (
     DELIVERY_LOG_HEADER, GoogleSheetsService, SheetsClient, auto_sync_job,
-    delivery_log_job,
+    delivery_log_job, status_history_job,
 )
 from bot.services.setting_service import SettingService
 
@@ -608,3 +608,122 @@ async def test_sync_tasks_missing_new_columns_default(session_factory):
         assert cfg.time is None                         # больше НЕ выводится из due_time
         assert cfg.due_time.isoformat() == "18:00:00"
         assert cfg.due_days_offset == 0
+
+
+# ---------------------------------------------------------------------------
+# Часть Д: status_history_job — выгрузка истории статусов в «История статусов»
+# ---------------------------------------------------------------------------
+
+async def _make_status_logs(session_factory) -> dict[str, int]:
+    """Инстанс + четыре записи TaskLog: first (old_status IS NULL — первое
+    создание), manual (переход от Вали), auto (user_id IS NULL — авто-переход)
+    и logged (уже выгруженная — не должна попасть в лист повторно)."""
+    from bot.database.models import Role, TaskLog
+    from bot.database.repositories.task_repository import TaskRepository
+    from bot.database.repositories.user_repository import UserRepository
+    from bot.services.task_service import TaskService
+
+    async with session_factory() as s:
+        valya = await UserRepository(s).upsert(telegram_id=10, name="Валя",
+                                               role=Role.MANAGER_WB)
+        cfg = await TaskRepository(s).upsert_config(dict(
+            external_task_id="history_me", title="Проверка артикулов",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=valya.id, is_active=True))
+        inst = await TaskService(s).create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+        first = TaskLog(task_instance_id=inst.id, user_id=None, action="task.create",
+                        old_status=None, new_status="created",
+                        created_at=datetime(2026, 7, 10, 9, 0))
+        manual = TaskLog(task_instance_id=inst.id, user_id=valya.id, action="task.take",
+                         old_status="created", new_status="in_progress",
+                         created_at=datetime(2026, 7, 10, 9, 5))
+        auto = TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                       old_status="in_progress", new_status="overdue",
+                       created_at=datetime(2026, 7, 11, 9, 0))
+        logged = TaskLog(task_instance_id=inst.id, user_id=valya.id, action="task.done",
+                         old_status="overdue", new_status="completed",
+                         created_at=datetime(2026, 7, 11, 12, 0),
+                         sheet_logged_at=datetime(2026, 7, 11, 13, 0))
+        s.add_all([first, manual, auto, logged])
+        await s.commit()
+        return {"first": first.id, "manual": manual.id,
+                "auto": auto.id, "logged": logged.id}
+
+
+async def _enable_status_history(session_factory) -> None:
+    async with session_factory() as s:
+        await SettingService(s).set("status_history_log.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+
+
+async def test_status_history_job_skips_when_disabled(session_factory):
+    from bot.database.models import TaskLog
+
+    ids = await _make_status_logs(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client) as client_cls, \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await status_history_job(AsyncMock(), session_factory)  # enabled=False по умолчанию
+    client_cls.assert_not_called()
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["manual"])).sheet_logged_at is None
+
+
+async def test_status_history_job_logs_every_transition_once(session_factory):
+    """КАЖДАЯ невыгруженная запись TaskLog попадает в лист ровно один раз:
+    без фильтра по статусу; old_status IS NULL -> «—»; для авто-переходов
+    (user_id IS NULL) колонка «Кто» показывает action, а не падает на None."""
+    from bot.database.models import TaskLog
+
+    ids = await _make_status_logs(session_factory)
+    await _enable_status_history(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client), \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await status_history_job(AsyncMock(), session_factory)
+        await status_history_job(AsyncMock(), session_factory)  # повторный прогон
+
+    fake_client.append_rows.assert_called_once()                # дублей нет
+    sheet_name, rows, header = fake_client.append_rows.call_args.args
+    assert sheet_name == "История статусов"
+    assert header == ["Задача", "Был статус", "Стал статус", "Кто", "Когда"]
+    assert rows == [
+        ["Проверка артикулов", "—", "created", "task.create", "10.07.2026 09:00"],
+        ["Проверка артикулов", "created", "in_progress", "Валя", "10.07.2026 09:05"],
+        ["Проверка артикулов", "in_progress", "overdue", "auto:overdue",
+         "11.07.2026 09:00"],
+    ]
+    async with session_factory() as s:
+        for key in ("first", "manual", "auto"):
+            assert (await s.get(TaskLog, ids[key])).sheet_logged_at is not None
+        # Часть Г не затронута: свой флаг owner_notified_at этот job не трогает
+        assert (await s.get(TaskLog, ids["auto"])).owner_notified_at is None
+
+
+async def test_status_history_job_error_keeps_rows_for_retry(session_factory):
+    """Сбой Google API: исключение ловится, ничего не помечено — весь пакет
+    уходит повторно на следующем интервале (та же обработка ошибок, что у
+    delivery_log_job, Часть Б)."""
+    from bot.database.models import TaskLog
+
+    ids = await _make_status_logs(session_factory)
+    await _enable_status_history(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    fake_client.append_rows.side_effect = RuntimeError("quota exceeded")
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client), \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await status_history_job(AsyncMock(), session_factory)  # не должен упасть наружу
+        async with session_factory() as s:
+            assert (await s.get(TaskLog, ids["manual"])).sheet_logged_at is None
+        fake_client.append_rows.side_effect = None              # Sheets «ожил»
+        await status_history_job(AsyncMock(), session_factory)
+    assert fake_client.append_rows.call_count == 2              # ретрай состоялся
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["manual"])).sheet_logged_at is not None

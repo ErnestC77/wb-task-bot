@@ -478,3 +478,63 @@ async def delivery_log_job(bot, session_factory) -> None:
         for inst in instances:
             inst.sheet_logged_at = now
         await session.commit()
+
+
+STATUS_HISTORY_SHEET_NAME = "История статусов"
+STATUS_HISTORY_HEADER = ["Задача", "Был статус", "Стал статус", "Кто", "Когда"]
+
+
+async def status_history_job(bot, session_factory) -> None:
+    """Job-обработчик листа «История статусов» (Часть Д; регистрируется
+    SchedulerService.register_status_history_job — Task 20). По строке на
+    КАЖДУЮ запись TaskLog без фильтра по статусу — полная хронология смен
+    статуса, в отличие от настраиваемого списка уведомляемых статусов
+    Части Г. Идемпотентность — через TaskLog.sheet_logged_at (отдельный
+    флаг: НЕ owner_notified_at Части Г и НЕ TaskInstance.sheet_logged_at
+    Части Б). Ничего не делает при status_history_log.enabled=False.
+
+    Ошибка Google Sheets API логируется, ни одна запись НЕ помечается —
+    весь пакет уйдёт повторно на следующем интервале (как delivery_log_job)."""
+    from bot.database.db import async_session_factory
+    from bot.database.repositories.task_repository import TaskRepository
+    from bot.database.repositories.user_repository import UserRepository
+    from bot.services.status_notification_service import resolve_log_actor
+
+    factory = session_factory or async_session_factory
+    async with factory() as session:
+        settings = SettingService(session)
+        if not bool(await settings.get("status_history_log.enabled")):
+            return
+        task_repo = TaskRepository(session)
+        users = UserRepository(session)
+        logs = await task_repo.get_unlogged_status_logs()
+        if not logs:
+            return
+        rows: list[list] = []
+        for log in logs:
+            inst = await task_repo.get_instance(log.task_instance_id)
+            title = inst.title_snapshot if inst else f"задача #{log.task_instance_id}"
+            rows.append([
+                title,
+                log.old_status or "—",       # NULL — первое создание записи
+                log.new_status or "—",
+                await resolve_log_actor(users, log),
+                (log.created_at.strftime(_DELIVERY_LOG_DT_FORMAT)
+                 if log.created_at else "—"),
+            ])
+        spreadsheet_id = (str(await settings.get("sync.spreadsheet_id"))
+                          or get_settings().google_sheets_spreadsheet_id)
+        try:
+            client = SheetsClient(
+                get_settings().google_sheets_credentials_file, spreadsheet_id)
+            client.append_rows(STATUS_HISTORY_SHEET_NAME, rows, STATUS_HISTORY_HEADER)
+        except Exception:  # noqa: BLE001 — недоступность Sheets не роняет планировщик
+            logger.exception(
+                "status_history_job: не удалось дописать %d строк(и) в лист %r — "
+                "строки будут повторно взяты на следующем интервале",
+                len(rows), STATUS_HISTORY_SHEET_NAME)
+            return
+        now = datetime.utcnow()
+        for log in logs:
+            log.sheet_logged_at = now
+        await session.commit()
