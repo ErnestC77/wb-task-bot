@@ -175,8 +175,10 @@ class SchedulerService:
         if self.scheduler.get_job("auto_sync"):
             self.scheduler.remove_job("auto_sync")
         if enabled:
+            # self третьим аргументом: auto_sync_job после коммита вызывает
+            # rebuild_config_job для изменённых синком конфигов (Часть А).
             self.scheduler.add_job(auto_sync_job, "interval", minutes=minutes,
-                                   args=[self.bot, self.session_factory],
+                                   args=[self.bot, self.session_factory, self],
                                    id="auto_sync", misfire_grace_time=GRACE)
 
 

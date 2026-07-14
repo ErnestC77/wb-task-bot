@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import func, select
@@ -350,3 +350,58 @@ async def test_sync_tasks_reports_changed_config_ids(session_factory):
         report = await svc.sync_tasks([], dry_run=False)
         await s.commit()
         assert report.changed_config_ids == [cfg_id]
+
+
+async def test_auto_sync_job_rebuilds_jobs_for_changed_configs(session_factory):
+    """Часть А: фоновый auto_sync_job после коммита пересобирает джобы
+    изменённых конфигов через переданный SchedulerService."""
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from bot.services.scheduler_service import SchedulerService
+
+    async with session_factory() as s:
+        await SettingService(s).set("sync.auto_enabled", True, actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    task_rows = [{"external_task_id": "auto_resync_me", "title": "Задача",
+                  "scenario": "simple", "schedule_type": "daily",
+                  "time": "18:00", "due_time": "18:00", "active": "1"}]
+    fake_client = MagicMock()
+    fake_client.read_rows = lambda sheet_name: (
+        task_rows if sheet_name == "Tasks_Config" else [])
+    fake_settings = MagicMock(google_sheets_credentials_file="creds.json",
+                              google_sheets_spreadsheet_id="sheet-id")
+
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client), \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await auto_sync_job(AsyncMock(), session_factory, scheduler_svc=svc)
+
+    async with session_factory() as s:
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "auto_resync_me"))
+        assert cfg is not None
+        assert cfg.next_run_at is not None
+        cfg_id = cfg.id
+    assert scheduler.get_job(f"config:{cfg_id}") is not None
+
+
+async def test_register_sync_job_passes_scheduler_service_to_job(session_factory):
+    """register_sync_job обязан отдавать job'у сам SchedulerService третьим
+    аргументом — иначе auto_sync_job не сможет пересобрать джобы конфигов."""
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from bot.services.scheduler_service import SchedulerService
+
+    async with session_factory() as s:
+        await SettingService(s).set("sync.auto_enabled", True, actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_sync_job()
+    job = scheduler.get_job("auto_sync")
+    assert job is not None
+    assert len(job.args) == 3
+    assert job.args[2] is svc

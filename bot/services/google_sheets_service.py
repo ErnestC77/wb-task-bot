@@ -374,10 +374,16 @@ class GoogleSheetsService:
         return results
 
 
-async def auto_sync_job(bot, session_factory) -> None:
+async def auto_sync_job(bot, session_factory, scheduler_svc=None) -> None:
     """Job-обработчик автосинхронизации (регистрируется
     SchedulerService.register_sync_job — Task 12). Ничего не делает, если
-    sync.auto_enabled=False."""
+    sync.auto_enabled=False.
+
+    Часть А: после коммита пересобирает APScheduler-джобы изменённых
+    конфигов через scheduler_svc (сам SchedulerService, передан
+    register_sync_job'ом третьим аргументом). Пересборка — ПОСЛЕ выхода из
+    сессии: rebuild_config_job открывает собственную сессию и должен видеть
+    уже закоммиченные данные (правило Task 27/28/33)."""
     from bot.database.db import async_session_factory
 
     factory = session_factory or async_session_factory
@@ -388,5 +394,9 @@ async def auto_sync_job(bot, session_factory) -> None:
         spreadsheet_id = (str(await settings.get("sync.spreadsheet_id"))
                           or get_settings().google_sheets_spreadsheet_id)
         client = SheetsClient(get_settings().google_sheets_credentials_file, spreadsheet_id)
-        await GoogleSheetsService(session, client).sync_all(dry_run=False, actor_user_id=None)
+        results = await GoogleSheetsService(session, client).sync_all(
+            dry_run=False, actor_user_id=None)
         await session.commit()
+    if scheduler_svc is not None:
+        for config_id in results["tasks"].changed_config_ids:
+            await scheduler_svc.rebuild_config_job(config_id)
