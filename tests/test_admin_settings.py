@@ -288,3 +288,20 @@ async def test_rem_section_opens_reminders_and_approval_categories(session):
     payloads = [row[0].callback_data for row in reply_markup.inline_keyboard[:-1]]
     categories = [AdminCb.unpack(p).k for p in payloads]
     assert categories == ["reminders", "approval"]
+
+
+async def test_delivery_log_settings_rebuild_delivery_log_job(session):
+    """Часть Б: правка delivery_log.* через общий редактор настроек
+    пересобирает ИМЕННО delivery_log-job, а не sync-job."""
+    cfg, valya = await make_config(session)
+    from bot.handlers.admin.settings import SCHEDULER_AFFECTING, apply_setting_input
+
+    assert "delivery_log.enabled" in SCHEDULER_AFFECTING
+    assert "delivery_log.interval_minutes" in SCHEDULER_AFFECTING
+
+    scheduler_svc = AsyncMock()
+    ok, _ = await apply_setting_input(session, valya, "delivery_log.interval_minutes",
+                                      "30", scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_delivery_log_job.assert_awaited()
+    scheduler_svc.register_sync_job.assert_not_awaited()

@@ -158,3 +158,50 @@ async def test_setup_scheduler_uses_utc_timezone(session_factory):
 
     scheduler = await setup_scheduler(AsyncMock(), session_factory)
     assert str(scheduler.timezone) == "UTC"
+
+
+async def test_register_delivery_log_job_enabled_interval_no_duplicates(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("delivery_log.enabled", True, actor_user_id=None)
+        await SettingService(s).set("delivery_log.interval_minutes", 30,
+                                    actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    for _ in range(3):                                 # идемпотентно, без дублей
+        await svc.register_delivery_log_job()
+    jobs = [j for j in scheduler.get_jobs() if j.id == "delivery_log"]
+    assert len(jobs) == 1
+    assert jobs[0].trigger.interval.total_seconds() == 30 * 60
+
+
+async def test_register_delivery_log_job_disabled_removes_job(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("delivery_log.enabled", True, actor_user_id=None)
+        await s.commit()
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_delivery_log_job()
+    assert scheduler.get_job("delivery_log") is not None
+
+    async with session_factory() as s:
+        await SettingService(s).set("delivery_log.enabled", False, actor_user_id=None)
+        await s.commit()
+    await svc.register_delivery_log_job()
+    assert scheduler.get_job("delivery_log") is None    # выключили — job снят
+
+
+async def test_setup_scheduler_registers_delivery_log_job(session_factory):
+    from bot.services.scheduler_service import setup_scheduler
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("delivery_log.enabled", True, actor_user_id=None)
+        await s.commit()
+    scheduler = await setup_scheduler(AsyncMock(), session_factory)
+    assert scheduler.get_job("delivery_log") is not None

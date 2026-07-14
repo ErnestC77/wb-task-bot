@@ -181,6 +181,25 @@ class SchedulerService:
                                    args=[self.bot, self.session_factory, self],
                                    id="auto_sync", misfire_grace_time=GRACE)
 
+    async def register_delivery_log_job(self) -> None:
+        """Часть Б: по образцу register_sync_job — снимает job "delivery_log"
+        и, если delivery_log.enabled=True, регистрирует delivery_log_job с
+        интервалом delivery_log.interval_minutes. Явный remove_job перед
+        add_job — см. комментарий в register_report_job (до scheduler.start()
+        replace_existing не заменяет, а копит job'ы в _pending_jobs)."""
+        from bot.services.google_sheets_service import delivery_log_job
+        from bot.services.setting_service import SettingService
+        async with self.session_factory() as session:
+            settings = SettingService(session)
+            enabled = bool(await settings.get("delivery_log.enabled"))
+            minutes = int(await settings.get("delivery_log.interval_minutes"))
+        if self.scheduler.get_job("delivery_log"):
+            self.scheduler.remove_job("delivery_log")
+        if enabled:
+            self.scheduler.add_job(delivery_log_job, "interval", minutes=minutes,
+                                   args=[self.bot, self.session_factory],
+                                   id="delivery_log", misfire_grace_time=GRACE)
+
 
 async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     from bot.database.repositories.task_repository import TaskRepository
@@ -210,4 +229,5 @@ async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
             svc.register_config_job(config)
     await svc.register_report_job()
     await svc.register_sync_job()
+    await svc.register_delivery_log_job()
     return scheduler

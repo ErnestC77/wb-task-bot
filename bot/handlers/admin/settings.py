@@ -36,7 +36,8 @@ from bot.utils.validation import validate_int, validate_json_value, validate_tim
 router = Router(name=__name__)
 
 SCHEDULER_AFFECTING = {"reports.weekday", "reports.time",
-                       "sync.auto_enabled", "sync.interval_minutes"}
+                       "sync.auto_enabled", "sync.interval_minutes",
+                       "delivery_log.enabled", "delivery_log.interval_minutes"}
 
 # Категории раздела "set" (все редактируемые) и "rem" (только напоминания +
 # подтверждение — пункт меню "🔔 Напоминания и подтверждение").
@@ -113,6 +114,8 @@ async def apply_setting_input(session, actor, key: str, raw: str,
         await session.commit()
         if key.startswith("reports."):
             await scheduler_svc.register_report_job()
+        elif key.startswith("delivery_log."):
+            await scheduler_svc.register_delivery_log_job()
         else:
             await scheduler_svc.register_sync_job()
     return True, "Сохранено ✅"
