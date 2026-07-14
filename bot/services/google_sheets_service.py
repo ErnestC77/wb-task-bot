@@ -64,15 +64,17 @@ class SheetsClient:
     def read_rows(self, sheet_name: str) -> list[dict]:
         return self._spreadsheet.worksheet(sheet_name).get_all_records()
 
-    def append_rows(self, sheet_name: str, rows: list[list]) -> None:
+    def append_rows(self, sheet_name: str, rows: list[list],
+                    header: list[str]) -> None:
         """Дописывает строки в лист; если листа нет — создаёт его и пишет
-        первой строкой заголовок DELIVERY_LOG_HEADER (Часть Б)."""
+        первой строкой переданный заголовок (Часть Б — «Журнал отправок»,
+        Часть Д — «История статусов»)."""
         try:
             ws = self._spreadsheet.worksheet(sheet_name)
         except gspread.exceptions.WorksheetNotFound:
             ws = self._spreadsheet.add_worksheet(
-                title=sheet_name, rows=1, cols=len(DELIVERY_LOG_HEADER))
-            ws.append_row(DELIVERY_LOG_HEADER)
+                title=sheet_name, rows=1, cols=len(header))
+            ws.append_row(header)
         ws.append_rows(rows)
 
 
@@ -465,7 +467,7 @@ async def delivery_log_job(bot, session_factory) -> None:
         try:
             client = SheetsClient(
                 get_settings().google_sheets_credentials_file, spreadsheet_id)
-            client.append_rows(DELIVERY_LOG_SHEET_NAME, rows)
+            client.append_rows(DELIVERY_LOG_SHEET_NAME, rows, DELIVERY_LOG_HEADER)
         except Exception:  # noqa: BLE001 — недоступность Sheets не роняет планировщик
             logger.exception(
                 "delivery_log_job: не удалось дописать %d строк(и) в лист %r — "

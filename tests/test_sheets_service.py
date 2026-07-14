@@ -7,7 +7,8 @@ from sqlalchemy import func, select
 from bot.database.models import AdminAuditLog, Article, TaskConfig, Topic, User
 from bot.database.repositories.audit_repository import AuditRepository
 from bot.services.google_sheets_service import (
-    GoogleSheetsService, SheetsClient, auto_sync_job, delivery_log_job,
+    DELIVERY_LOG_HEADER, GoogleSheetsService, SheetsClient, auto_sync_job,
+    delivery_log_job,
 )
 from bot.services.setting_service import SettingService
 
@@ -427,7 +428,8 @@ def test_append_rows_appends_to_existing_sheet():
     fake.worksheet.return_value = ws
     client = _client_with_fake_spreadsheet(fake)
     client.append_rows("Журнал отправок", [["Задача 1", "Товары",
-                                            "10.07.2026 09:01", "10.07.2026 12:00"]])
+                                            "10.07.2026 09:01", "10.07.2026 12:00"]],
+                       DELIVERY_LOG_HEADER)
     ws.append_rows.assert_called_once_with(
         [["Задача 1", "Товары", "10.07.2026 09:01", "10.07.2026 12:00"]])
     fake.add_worksheet.assert_not_called()
@@ -440,10 +442,26 @@ def test_append_rows_creates_missing_sheet_with_header():
     fake.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("нет листа")
     fake.add_worksheet.return_value = ws
     client = _client_with_fake_spreadsheet(fake)
-    client.append_rows("Журнал отправок", [["a", "b", "c", "d"]])
+    client.append_rows("Журнал отправок", [["a", "b", "c", "d"]], DELIVERY_LOG_HEADER)
     ws.append_row.assert_called_once_with(
         ["Задача", "Чат/тема", "Время отправки", "Дедлайн"])
     ws.append_rows.assert_called_once_with([["a", "b", "c", "d"]])
+
+
+def test_append_rows_uses_passed_header_for_new_sheet():
+    """Часть Д: заголовок автосоздаваемого листа — параметр append_rows, а не
+    константа «Журнала отправок»: у «Истории статусов» другие колонки."""
+    import gspread
+    ws = MagicMock()
+    fake = MagicMock()
+    fake.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("нет листа")
+    fake.add_worksheet.return_value = ws
+    client = _client_with_fake_spreadsheet(fake)
+    header = ["Задача", "Был статус", "Стал статус", "Кто", "Когда"]
+    client.append_rows("История статусов", [["a", "b", "c", "d", "e"]], header)
+    fake.add_worksheet.assert_called_once_with(title="История статусов", rows=1, cols=5)
+    ws.append_row.assert_called_once_with(header)
+    ws.append_rows.assert_called_once_with([["a", "b", "c", "d", "e"]])
 
 
 # ---------------------------------------------------------------------------
@@ -524,8 +542,9 @@ async def test_delivery_log_job_logs_only_sent_once(session_factory):
         await delivery_log_job(AsyncMock(), session_factory)   # повторный прогон
 
     fake_client.append_rows.assert_called_once()               # дублей нет
-    sheet_name, rows = fake_client.append_rows.call_args.args
+    sheet_name, rows, header = fake_client.append_rows.call_args.args
     assert sheet_name == "Журнал отправок"
+    assert header == DELIVERY_LOG_HEADER
     assert rows == [["Проверка артикулов", "Товары",
                      "10.07.2026 09:01", "10.07.2026 12:00"]]
     async with session_factory() as s:

@@ -46,7 +46,7 @@ async def test_delivery_log_job_only_sent_and_idempotent_pg(pg_session_factory):
         await delivery_log_job(AsyncMock(), pg_session_factory)   # повторный прогон
 
     fake_client.append_rows.assert_called_once()
-    _sheet, rows = fake_client.append_rows.call_args.args
+    _sheet, rows, _header = fake_client.append_rows.call_args.args
     assert len(rows) == 1
     async with pg_session_factory() as s:
         assert (await s.get(TaskInstance, sent_id)).sheet_logged_at is not None
