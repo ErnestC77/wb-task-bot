@@ -326,14 +326,16 @@ class GoogleSheetsService:
                         "schedule_interval": _int_or_none(row.get("schedule_interval")),
                         # time — момент, когда планировщик реально создаёт/отправляет
                         # задачу (compute_next_run, bot/services/scheduler_service.py,
-                        # работает в naive-UTC) — иначе задача всегда уходила бы в
-                        # 09:00 по умолчанию независимо от due_time в таблице.
-                        # due_time в самой таблице — московское время, поэтому для
-                        # time конвертируем в UTC; due_time (дедлайн, показывается
-                        # сотрудникам текстом) оставляем как есть — по МСК, как
-                        # написано в таблице, это и должно быть видно человеку.
-                        "time": _moscow_to_utc(_parse_time(row.get("due_time"))),
+                        # работает в naive-UTC). Часть В: читается из СОБСТВЕННОЙ
+                        # колонки листа `time` (МСК -> UTC); раньше вычислялся из
+                        # ячейки due_time — колонки были искусственно склеены.
+                        # due_time (дедлайн, показывается сотрудникам текстом) —
+                        # из своей колонки, без конвертации: по МСК, как в таблице.
+                        # due_days_offset — дедлайн через N дней после дня отправки;
+                        # пустая ячейка/нет колонки -> 0 (тот же день, как раньше).
+                        "time": _moscow_to_utc(_parse_time(row.get("time"))),
                         "due_time": _parse_time(row.get("due_time")),
+                        "due_days_offset": _int_or_none(row.get("due_days_offset")) or 0,
                         "run_on_weekends": _truthy(row.get("run_on_weekends", "1")),
                         "skip_holidays": _truthy(row.get("skip_holidays", "0"), default=False),
                         "need_approval": _truthy(row.get("need_approval", "0"), default=False),

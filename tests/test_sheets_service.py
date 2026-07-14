@@ -165,7 +165,7 @@ async def test_sync_topics_add_update_deactivate(session_factory):
 TASK_ROWS = [
     {"external_task_id": "articles_check_all", "title": "Проверка артикулов",
      "scenario": "article_check", "schedule_type": "daily", "schedule_interval": "",
-     "due_time": "18:00", "active": "1"},
+     "time": "18:00", "due_time": "18:00", "due_days_offset": "", "active": "1"},
 ]
 
 
@@ -555,3 +555,37 @@ async def test_delivery_log_job_error_keeps_rows_for_retry(session_factory):
     assert fake_client.append_rows.call_count == 2             # ретрай состоялся
     async with session_factory() as s:
         assert (await s.get(TaskInstance, ids["sent"])).sheet_logged_at is not None
+
+
+async def test_sync_tasks_time_and_due_time_independent(session_factory):
+    """Часть В: time (отправка) и due_time (дедлайн) — независимые колонки
+    листа; due_days_offset читается из своей колонки."""
+    row = [{"external_task_id": "independent", "title": "Задача", "scenario": "simple",
+            "schedule_type": "daily", "time": "10:00", "due_time": "18:00",
+            "due_days_offset": "2", "active": "1"}]
+    async with session_factory() as s:
+        svc = GoogleSheetsService(s, client=None)
+        await svc.sync_tasks(row, dry_run=False)
+        await s.commit()
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "independent"))
+        assert cfg.time.isoformat() == "07:00:00"       # 10:00 МСК -> 07:00 UTC
+        assert cfg.due_time.isoformat() == "18:00:00"   # дедлайн — как в таблице, МСК
+        assert cfg.due_days_offset == 2
+
+
+async def test_sync_tasks_missing_new_columns_default(session_factory):
+    """Обратная совместимость: без колонок time/due_days_offset — time=None
+    (планировщик подставит дефолт 09:00), offset=0 (дедлайн в день отправки)."""
+    row = [{"external_task_id": "no_new_columns", "title": "Задача",
+            "scenario": "simple", "schedule_type": "daily",
+            "due_time": "18:00", "active": "1"}]
+    async with session_factory() as s:
+        svc = GoogleSheetsService(s, client=None)
+        await svc.sync_tasks(row, dry_run=False)
+        await s.commit()
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "no_new_columns"))
+        assert cfg.time is None                         # больше НЕ выводится из due_time
+        assert cfg.due_time.isoformat() == "18:00:00"
+        assert cfg.due_days_offset == 0
