@@ -191,3 +191,22 @@ async def test_status_history_log_settings_registered_with_defaults(session):
 def test_status_history_log_category_has_title():
     from bot.keyboards.admin.settings import CATEGORY_TITLES
     assert CATEGORY_TITLES["status_history_log"] == "История статусов (лист)"
+
+
+def test_every_editable_setting_has_a_human_description():
+    """Экран настроек показывает описание вместо сырого ключа — у КАЖДОЙ
+    редактируемой настройки должно быть непустое человекочитаемое описание."""
+    missing = [k for k, d in SETTINGS_REGISTRY.items()
+              if d.is_editable and not d.description.strip()]
+    assert missing == []
+
+
+def test_receiver_user_id_settings_marked_for_name_resolution():
+    """questions.*_receiver_user_id хранят users.id (не telegram_id) — карточка
+    должна резолвить имя, а не показывать голое число. reports.private_receiver_ids
+    хранит СЫРЫЕ telegram chat_id внешних адресатов (не users.id) — НЕ размечен."""
+    for key in ("questions.default_receiver_user_id",
+                "questions.fallback_receiver_user_id",
+                "questions.escalation_receiver_user_id"):
+        assert SETTINGS_REGISTRY[key].value_kind == "user_id", key
+    assert SETTINGS_REGISTRY["reports.private_receiver_ids"].value_kind is None

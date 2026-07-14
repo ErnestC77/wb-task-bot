@@ -27,10 +27,10 @@ from bot.keyboards.admin.settings import (
     CATEGORY_TITLES, categories_keyboard, setting_card_keyboard, settings_list_keyboard,
 )
 from bot.services.admin_service import AdminService
-from bot.services.setting_service import SETTINGS_REGISTRY, SettingService
+from bot.services.setting_service import SETTINGS_REGISTRY, SettingDef, SettingService
 from bot.services.user_service import UserService
 from bot.states.admin_states import AdminStates
-from bot.utils.html_utils import code, html_escape
+from bot.utils.html_utils import bold, code, html_escape
 from bot.utils.validation import validate_int, validate_json_value, validate_time_str
 
 router = Router(name=__name__)
@@ -62,15 +62,41 @@ def key_by_index(category: str, index: int) -> str:
     return keys[index]
 
 
+async def format_setting_value(session, d: SettingDef, value: object) -> str:
+    """Человекочитаемое представление значения настройки для карточки/списка.
+
+    value_kind="user_id" — value хранит users.id (не telegram_id, см.
+    SettingDef.value_kind): резолвим имя+telegram_id через UserRepository,
+    0/None — «не задано» (соответствует проверке `if not user_id` в
+    question_service.resolve_receiver — та же семантика «получатель не
+    настроен»). Для bool — «Да»/«Нет» вместо true/false. list/dict — JSON,
+    иначе он нечитаем (список ролей, шаблон и т.д.); остальные скаляры —
+    просто текстом, без кавычек и JSON-эскейпинга."""
+    if d.value_kind == "user_id":
+        user_id = int(value) if value else 0
+        if not user_id:
+            return "не задано"
+        from bot.database.repositories.user_repository import UserRepository
+        user = await UserRepository(session).get_by_id(user_id)
+        return (f"{user.name} ({user.telegram_id})" if user is not None
+                else f"⚠ пользователь id={user_id} не найден")
+    if d.value_type is bool:
+        return "Да" if value else "Нет"
+    if d.value_type in (int, str):
+        return str(value)
+    return json.dumps(value, ensure_ascii=False)
+
+
 async def render_setting_card(session, key: str) -> str:
     d = SETTINGS_REGISTRY[key]
     value = await SettingService(session).get(key)
-    type_name = {int: "int", bool: "bool", str: "str"}.get(d.value_type, "json")
-    lines = [f"🔧 {code(key)}",
-             f"Описание: {html_escape(d.description or '—')}",
-             f"Тип: {type_name}",
-             f"Текущее значение: {code(json.dumps(value, ensure_ascii=False))}",
-             f"Default: {code(json.dumps(d.default, ensure_ascii=False))}"]
+    value_display = await format_setting_value(session, d, value)
+    default_display = await format_setting_value(session, d, d.default)
+    lines = [f"🔧 {bold(d.description or key)}",
+             f"Ключ: {code(key)}",
+             f"Категория: {CATEGORY_TITLES.get(d.category, d.category)}",
+             f"Значение: {code(value_display)}",
+             f"По умолчанию: {code(default_display)}"]
     if d.choices:
         lines.append("Допустимо: " + ", ".join(d.choices))
     if d.min_ is not None or d.max_ is not None:
@@ -160,8 +186,10 @@ async def _show_settings_list(callback: CallbackQuery, session, category: str, p
     entries: list[tuple[int, str, str]] = []
     for offset, key in enumerate(keys[start:start + page_size]):
         idx = start + offset
+        d = SETTINGS_REGISTRY[key]
         value = await settings_svc.get(key)
-        label = f"{key} = {json.dumps(value, ensure_ascii=False)}"
+        value_display = await format_setting_value(session, d, value)
+        label = f"{d.description or key}: {value_display}"
         entries.append((idx, key, label[:60]))
     title = CATEGORY_TITLES.get(category, category)
     await callback.message.edit_text(
@@ -190,11 +218,14 @@ async def _start_edit(callback: CallbackQuery, session, state: FSMContext | None
     if state is None:                                  # нет FSM-контекста — не тот транспорт
         await callback.answer("Недоступно", show_alert=True)
         return
+    d = SETTINGS_REGISTRY[key]
     current = await SettingService(session).get(key)
+    current_display = await format_setting_value(session, d, current)
     await state.set_state(AdminStates.waiting_value)
     await state.update_data(setting_key=key, category=category, idx=idx)
     await callback.message.edit_text(
-        f"Текущее значение {code(key)}: {code(json.dumps(current, ensure_ascii=False))}\n"
+        f"{bold(d.description or key)}\n"
+        f"Текущее значение: {code(current_display)}\n"
         "Введите новое значение сообщением:")
     await callback.answer()
 
@@ -223,9 +254,11 @@ async def _start_reset(callback: CallbackQuery, session, actor, svc: AdminServic
     token = svc.confirm_token(
         f"settings.reset.{key}", op,
         required_permission="settings.manage", creator_actor_id=actor.id)
-    text = (f"Сбросить {code(key)} к значению по умолчанию?\n"
-            f"Текущее: {code(json.dumps(old_value, ensure_ascii=False))}\n"
-            f"Default: {code(json.dumps(d.default, ensure_ascii=False))}")
+    old_display = await format_setting_value(session, d, old_value)
+    default_display = await format_setting_value(session, d, d.default)
+    text = (f"Сбросить {bold(d.description or key)} к значению по умолчанию?\n"
+            f"Текущее: {code(old_display)}\n"
+            f"По умолчанию: {code(default_display)}")
     await callback.message.edit_text(text, reply_markup=confirm_keyboard(token))
     await callback.answer()
 

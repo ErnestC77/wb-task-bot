@@ -31,11 +31,57 @@ async def test_auto_approve_change_affects_only_new_tasks(session):  # тест�
 
 
 async def test_settings_card_shows_current_value(session):
-    """Карточка отображает текущее значение перед изменением."""
+    """Карточка отображает человекочитаемое описание и текущее значение —
+    не сырой ключ вида approval.timeout_hours."""
     cfg, valya = await make_config(session)
     from bot.handlers.admin.settings import render_setting_card
     text = await render_setting_card(session, "approval.timeout_hours")
-    assert "24" in text and "int" in text
+    assert "24" in text
+    assert "Через сколько часов задача авто-подтверждается" in text
+
+
+async def test_settings_card_shows_bool_as_da_net(session):
+    """bool-настройка показывается как «Да»/«Нет», а не true/false."""
+    from bot.handlers.admin.settings import render_setting_card
+    text = await render_setting_card(session, "approval.auto_approve_enabled")
+    assert "Да" in text
+    assert "true" not in text.lower()
+
+
+async def test_settings_card_resolves_user_id_to_name(session):
+    """value_kind="user_id" — карточка показывает имя и telegram_id получателя,
+    а не голое внутреннее число users.id."""
+    sasha = await UserRepository(session).upsert(
+        telegram_id=602346341, name="Александр", role=Role.OWNER)
+    await SettingService(session).set(
+        "questions.default_receiver_user_id", sasha.id, actor_user_id=None)
+    await session.commit()
+
+    from bot.handlers.admin.settings import render_setting_card
+    text = await render_setting_card(session, "questions.default_receiver_user_id")
+    assert "Александр" in text
+    assert "602346341" in text
+
+
+async def test_settings_card_shows_not_set_for_zero_user_id(session):
+    """value_kind="user_id" со значением 0 (default) — «не задано», а не «0»."""
+    from bot.handlers.admin.settings import render_setting_card
+    text = await render_setting_card(session, "questions.fallback_receiver_user_id")
+    assert "не задано" in text.lower()
+
+
+async def test_settings_list_shows_description_not_raw_key(session):
+    """Кнопки в списке настроек категории — человеческое описание, а не
+    key = json_value."""
+    from bot.handlers.admin.settings import _show_settings_list
+    callback = AsyncMock()
+    await _show_settings_list(callback, session, "approval", 1)
+    reply_markup = callback.message.edit_text.await_args.kwargs.get("reply_markup") \
+        or callback.message.edit_text.await_args.args[1]
+    labels = [row[0].text for row in reply_markup.inline_keyboard[:-1]]
+    assert not any(label.startswith("approval.") for label in labels)
+    assert any("Через сколько часов задача авто-подтверждается" in label
+              for label in labels)
 
 
 async def test_edit_value_validated_and_scheduler_rebuilt(session):
