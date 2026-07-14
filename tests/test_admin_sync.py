@@ -509,3 +509,54 @@ def test_cancel_keyboard_roundtrip():
 
     cb = SynCb.unpack(cancel_keyboard(2).inline_keyboard[0][0].callback_data)
     assert cb.a == "card" and cb.id == 2
+
+
+async def test_confirmed_apply_rebuilds_jobs_for_changed_configs(session_factory):
+    """Часть А: подтверждённое «✅ Применить» после коммита пересобирает
+    APScheduler-джоб каждого добавленного/обновлённого конфига."""
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from bot.database.models import TaskConfig
+    from bot.handlers.admin.sync import handle_syn_callback
+    from bot.keyboards.admin.confirm import ConfirmCb
+    from bot.keyboards.admin.sync import SynCb
+    from bot.services.admin_service import AdminService
+    from bot.services.scheduler_service import SchedulerService
+
+    async with session_factory() as s:
+        owner = await UserRepository(s).upsert(telegram_id=1, name="O", role=Role.OWNER)
+        await s.commit()
+        owner_tg = owner.telegram_id
+
+    scheduler = AsyncIOScheduler()
+    scheduler.wb_service = SchedulerService(scheduler, AsyncMock(), session_factory)
+
+    class FakeDispatcher:
+        workflow_data = {"scheduler": scheduler}
+
+    task_rows = [{"external_task_id": "resync_me", "title": "Задача", "scenario": "simple",
+                  "schedule_type": "daily", "time": "18:00", "due_time": "18:00",
+                  "active": "1"}]
+    fake_client = MagicMock()
+    fake_client.read_rows = lambda sheet_name: (
+        task_rows if sheet_name == "Tasks_Config" else [])
+
+    async with session_factory() as s:
+        callback = AsyncMock()
+        callback.from_user.id = owner_tg
+        await handle_syn_callback(callback, SynCb(a="apply"), s,
+                                  dispatcher=FakeDispatcher())
+        kb = _reply_markup(callback)
+        confirm_cb = ConfirmCb.unpack(kb.inline_keyboard[0][0].callback_data)
+        svc = AdminService(s)
+        with patch("bot.handlers.admin.sync.SheetsClient", return_value=fake_client):
+            ok = await svc.execute_confirmed(confirm_cb.t, s)
+        await s.commit()                       # no-op: apply_sync уже закоммитила
+        assert ok is True
+
+    async with session_factory() as s:
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "resync_me"))
+        assert cfg is not None
+        assert cfg.next_run_at is not None      # rebuild_config_job пересчитал
+        cfg_id = cfg.id
+    assert scheduler.get_job(f"config:{cfg_id}") is not None

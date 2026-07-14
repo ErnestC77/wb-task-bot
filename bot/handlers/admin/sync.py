@@ -90,9 +90,23 @@ async def dry_run_sync(session, actor) -> dict:
     return await svc.sync_all(dry_run=True, actor_user_id=actor.id)
 
 
-async def apply_sync(session, actor, client) -> dict:
+async def apply_sync(session, actor, client, scheduler_svc=None) -> dict:
+    """Часть А: после реального синка пересобирает APScheduler-джобы всех
+    изменённых (добавленных/обновлённых/деактивированных) TaskConfig — иначе
+    правка расписания прямо в Google-таблице продолжала бы исполняться по
+    старому расписанию до следующего естественного пересчёта next_run_at.
+
+    Коммит ВНУТРИ, ДО пересборки: rebuild_config_job открывает СВОЮ сессию
+    через session_factory и на Postgres не увидит незакоммиченные данные
+    (правило Task 27/28/33 — тот же паттерн, что apply_schedule_field и
+    toggle_auto_sync). Повторный commit() вызывающего кода — безопасный no-op."""
     svc = GoogleSheetsService(session, client=client)
-    return await svc.sync_all(dry_run=False, actor_user_id=actor.id)
+    results = await svc.sync_all(dry_run=False, actor_user_id=actor.id)
+    await session.commit()
+    if scheduler_svc is not None:
+        for config_id in results["tasks"].changed_config_ids:
+            await scheduler_svc.rebuild_config_job(config_id)
+    return results
 
 
 async def toggle_auto_sync(session, actor, enabled: bool, scheduler_svc) -> None:
@@ -182,11 +196,13 @@ async def _do_dry_run(callback: CallbackQuery, session, actor) -> None:
     await callback.answer()
 
 
-async def _start_apply(callback: CallbackQuery, session, actor, svc: AdminService) -> None:
+async def _start_apply(callback: CallbackQuery, session, actor, svc: AdminService,
+                       scheduler_svc=None) -> None:
     """Реальная синхронизация — опасная операция (реально меняет данные в
     БД), только через confirm_token (см. docstring модуля). `bot`/строковые
     значения захватываются замыканием на момент создания токена, а не
-    `session` (Task 27 fix)."""
+    `session` (Task 27 fix). `scheduler_svc` — долгоживущий сервис, не
+    привязанный к сессии, замыканием захватывается безопасно."""
     settings_svc = SettingService(session)
     spreadsheet_id = (str(await settings_svc.get("sync.spreadsheet_id"))
                       or get_settings().google_sheets_spreadsheet_id)
@@ -194,7 +210,7 @@ async def _start_apply(callback: CallbackQuery, session, actor, svc: AdminServic
 
     async def op(session) -> None:
         client = SheetsClient(creds_file, spreadsheet_id)
-        await apply_sync(session, actor, client)
+        await apply_sync(session, actor, client, scheduler_svc)
 
     token = svc.confirm_token(
         "sync.apply", op, required_permission=PERMISSION, creator_actor_id=actor.id)
@@ -342,7 +358,8 @@ async def handle_syn_callback(callback: CallbackQuery, callback_data: SynCb, ses
     elif action == "dryrun":
         await _do_dry_run(callback, session, actor)
     elif action == "apply":
-        await _start_apply(callback, session, actor, svc)
+        await _start_apply(callback, session, actor, svc,
+                           _extract_scheduler_svc(dispatcher))
     elif action == "toggle":
         await _do_toggle(callback, session, actor, dispatcher)
     elif action == "noop":
