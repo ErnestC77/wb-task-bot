@@ -399,3 +399,69 @@ async def test_status_history_settings_rebuild_status_history_job(session):
     scheduler_svc.register_sync_job.assert_not_awaited()
     scheduler_svc.register_delivery_log_job.assert_not_awaited()
     scheduler_svc.register_status_notification_job.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Чек-боксы для настроек-списков (status_notifications.statuses/.targets,
+# reminders.targets/.escalation_targets) — тап по пункту вместо ввода JSON.
+# ---------------------------------------------------------------------------
+
+async def test_multi_choice_settings_marked_with_choices():
+    from bot.services.setting_service import SETTINGS_REGISTRY
+    for key in ("status_notifications.statuses", "status_notifications.targets",
+               "reminders.targets", "reminders.escalation_targets"):
+        d = SETTINGS_REGISTRY[key]
+        assert d.value_kind == "multi_choice", key
+        assert d.choices and len(d.choices) >= 2, key
+
+
+async def test_card_for_multi_choice_setting_shows_checkbox_keyboard(session):
+    """Карточка multi_choice-настройки — чек-боксы (✅/⬜ на пункт), а не
+    кнопки «✏ Изменить»/«↩ Сбросить» обычной карточки."""
+    from bot.handlers.admin.settings import _show_card, category_keys
+
+    idx = category_keys("status_notifications").index("status_notifications.targets")
+    callback = AsyncMock()
+    await _show_card(callback, session, "status_notifications", idx)
+    reply_markup = callback.message.edit_text.await_args.kwargs.get("reply_markup") \
+        or callback.message.edit_text.await_args.args[1]
+    button_texts = [b.text for row in reply_markup.inline_keyboard for b in row]
+    assert any(t.startswith("✅") or t.startswith("⬜") for t in button_texts)
+    assert not any("Изменить" in t for t in button_texts)
+
+
+async def test_toggle_choice_adds_and_removes_value(session):
+    from bot.database.models import Role
+    from bot.handlers.admin.settings import _dispatch, category_keys
+    from bot.keyboards.admin.main import AdminCb
+    from bot.services.setting_service import SettingService
+
+    owner = await UserRepository(session).upsert(telegram_id=99, name="O", role=Role.OWNER)
+    await session.commit()
+    from bot.services.admin_service import AdminService
+    svc = AdminService(session)
+    idx = category_keys("status_notifications").index("status_notifications.targets")
+    choices = ("owner", "partner")
+    assert await SettingService(session).get("status_notifications.targets") == ["owner"]
+
+    # тап по "partner" (choice_idx=1) — добавляет
+    callback = AsyncMock()
+    await _dispatch(callback, AdminCb(s="set", a="toggle", k="status_notifications",
+                                      id=idx, p=1), session, owner, svc, None,
+                    "set", [])
+    assert set(await SettingService(session).get("status_notifications.targets")) == \
+        {"owner", "partner"}
+
+    # повторный тап по "partner" — убирает обратно
+    callback2 = AsyncMock()
+    await _dispatch(callback2, AdminCb(s="set", a="toggle", k="status_notifications",
+                                       id=idx, p=1), session, owner, svc, None,
+                    "set", [])
+    assert await SettingService(session).get("status_notifications.targets") == ["owner"]
+
+
+async def test_settings_card_multi_choice_value_uses_human_titles(session):
+    from bot.handlers.admin.settings import render_setting_card
+    text = await render_setting_card(session, "reminders.escalation_targets")
+    assert "Владельцу" in text
+    assert '["owner"]' not in text

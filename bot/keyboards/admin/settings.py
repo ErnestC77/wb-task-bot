@@ -17,6 +17,25 @@ CATEGORY_TITLES: dict[str, str] = {
     "status_history_log": "История статусов (лист)",
 }
 
+# Человеческие подписи для отдельных значений multi_choice-настроек (чек-боксы
+# в multi_choice_keyboard и текст «Значение:» в render_setting_card).
+CHOICE_TITLES: dict[str, str] = {
+    "topic": "В чат задачи",
+    "responsible_private": "Исполнителю лично",
+    "owner": "Владельцу",
+    "partner": "Партнёру",
+    "created": "Создана",
+    "in_progress": "Взята в работу",
+    "completed": "Выполнена",
+    "waiting_approval": "Ждёт подтверждения",
+    "approved": "Подтверждена",
+    "auto_approved": "Авто-подтверждена",
+    "postponed": "Перенесена",
+    "problem": "Проблема",
+    "overdue": "Просрочена",
+    "cancelled": "Отменена",
+}
+
 
 def categories_keyboard(section: str, categories: list[str]) -> InlineKeyboardMarkup:
     """Список категорий. `section` — код раздела меню ("set" или "rem"), под
@@ -56,6 +75,25 @@ def settings_list_keyboard(category: str, entries: list[tuple[int, str, str]],
         ])
     rows.append([InlineKeyboardButton(
         text="⬅ Назад", callback_data=AdminCb(s="set", a="open").pack())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def multi_choice_keyboard(category: str, idx: int, choices: tuple[str, ...],
+                          selected: list[str]) -> InlineKeyboardMarkup:
+    """Чек-боксы вместо ввода JSON текстом — тап по пункту сразу переключает
+    его (см. handle a="toggle" в bot/handlers/admin/settings.py). `p` в
+    callback_data переиспользован под индекс значения в `choices` (в этом
+    экшене пагинация не нужна — см. комментарий в settings_list_keyboard про
+    переиспользование полей AdminCb под разные экшены)."""
+    rows = [[InlineKeyboardButton(
+        text=f"{'✅' if choice in selected else '⬜'} {CHOICE_TITLES.get(choice, choice)}",
+        callback_data=AdminCb(s="set", a="toggle", k=category, id=idx, p=choice_idx).pack())]
+        for choice_idx, choice in enumerate(choices)]
+    rows.append([InlineKeyboardButton(
+        text="↩ Сбросить к default",
+        callback_data=AdminCb(s="set", a="reset", k=category, id=idx).pack())])
+    rows.append([InlineKeyboardButton(
+        text="⬅ Назад", callback_data=AdminCb(s="set", a="cat", k=category, p=1).pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 

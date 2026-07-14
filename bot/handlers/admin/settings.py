@@ -24,7 +24,8 @@ from aiogram.types import CallbackQuery, Message
 from bot.keyboards.admin.confirm import confirm_keyboard
 from bot.keyboards.admin.main import AdminCb, admin_menu_keyboard
 from bot.keyboards.admin.settings import (
-    CATEGORY_TITLES, categories_keyboard, setting_card_keyboard, settings_list_keyboard,
+    CATEGORY_TITLES, CHOICE_TITLES, categories_keyboard, multi_choice_keyboard,
+    setting_card_keyboard, settings_list_keyboard,
 )
 from bot.services.admin_service import AdminService
 from bot.services.setting_service import SETTINGS_REGISTRY, SettingDef, SettingService
@@ -80,6 +81,11 @@ async def format_setting_value(session, d: SettingDef, value: object) -> str:
         user = await UserRepository(session).get_by_id(user_id)
         return (f"{user.name} ({user.telegram_id})" if user is not None
                 else f"⚠ пользователь id={user_id} не найден")
+    if d.value_kind == "multi_choice":
+        selected = list(value) if value else []
+        if not selected:
+            return "не выбрано"
+        return ", ".join(CHOICE_TITLES.get(v, v) for v in selected)
     if d.value_type is bool:
         return "Да" if value else "Нет"
     if d.value_type in (int, str):
@@ -203,9 +209,41 @@ async def _show_card(callback: CallbackQuery, session, category: str, idx: int) 
     except KeyError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
+    d = SETTINGS_REGISTRY[key]
     text = await render_setting_card(session, key)
-    await callback.message.edit_text(text, reply_markup=setting_card_keyboard(category, idx))
+    if d.value_kind == "multi_choice":
+        selected = list(await SettingService(session).get(key))
+        keyboard = multi_choice_keyboard(category, idx, d.choices, selected)
+    else:
+        keyboard = setting_card_keyboard(category, idx)
+    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
+
+
+async def _toggle_choice(callback: CallbackQuery, session, actor,
+                         category: str, idx: int, choice_idx: int) -> None:
+    """Тап по чек-боксу multi_choice-настройки: переключает один пункт списка
+    (добавляет, если его нет, убирает, если есть) и сразу перерисовывает
+    карточку — никакого ввода JSON текстом (см. multi_choice_keyboard)."""
+    try:
+        key = key_by_index(category, idx)
+    except KeyError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    d = SETTINGS_REGISTRY[key]
+    if d.value_kind != "multi_choice" or not d.choices or not 0 <= choice_idx < len(d.choices):
+        await callback.answer("Недоступно", show_alert=True)
+        return
+    choice = d.choices[choice_idx]
+    settings_svc = SettingService(session)
+    current = list(await settings_svc.get(key))
+    if choice in current:
+        current.remove(choice)
+    else:
+        current.append(choice)
+    await settings_svc.set(key, current, actor_user_id=actor.id)
+    await session.commit()
+    await _show_card(callback, session, category, idx)
 
 
 async def _start_edit(callback: CallbackQuery, session, state: FSMContext | None,
@@ -279,6 +317,9 @@ async def _dispatch(callback: CallbackQuery, callback_data: AdminCb, session, ac
         await _start_edit(callback, session, state, callback_data.k, callback_data.id)
     elif action == "reset":
         await _start_reset(callback, session, actor, svc, callback_data.k, callback_data.id)
+    elif action == "toggle":
+        await _toggle_choice(callback, session, actor, callback_data.k,
+                             callback_data.id, callback_data.p)
     elif action == "noop":
         await callback.answer()
     else:
