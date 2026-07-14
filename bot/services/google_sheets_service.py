@@ -43,6 +43,12 @@ class SyncReport:
     updated: int = 0
     deactivated: int = 0
     skipped_conflicts: list[str] = field(default_factory=list)
+    # id добавленных/обновлённых/деактивированных TaskConfig за проход
+    # sync_tasks() (другие листы планировщик не трогают — там поле пустое).
+    # Использовать ТОЛЬКО после реального (dry_run=False) закоммиченного
+    # прогона: при dry-run savepoint откатывается, id добавленных строк —
+    # временные и в БД не существуют.
+    changed_config_ids: list[int] = field(default_factory=list)
 
 
 class SheetsClient:
@@ -320,7 +326,8 @@ class GoogleSheetsService:
                         "need_approval": _truthy(row.get("need_approval", "0"), default=False),
                         "is_active": _truthy(row.get("active", "1")),
                     }
-                    await task_repo.upsert_config(data)
+                    cfg = await task_repo.upsert_config(data)
+                    report.changed_config_ids.append(cfg.id)
                     if existing is None:
                         report.added += 1
                     else:
@@ -328,6 +335,7 @@ class GoogleSheetsService:
                 for stale in await task_repo.get_active_configs_not_in(seen):
                     stale.is_active = False
                     report.deactivated += 1
+                    report.changed_config_ids.append(stale.id)
                 await self.session.flush()
                 if dry_run:
                     raise _DryRunRollback(report)

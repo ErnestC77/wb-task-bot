@@ -321,3 +321,32 @@ async def test_auto_sync_job_skips_when_disabled(session_factory):
         assert await s.scalar(select(func.count(Article.id))) == 0
         log = await s.scalar(select(AdminAuditLog).where(AdminAuditLog.action == "sync.run"))
         assert log is None
+
+
+async def test_sync_tasks_reports_changed_config_ids(session_factory):
+    """Часть А: SyncReport перечисляет id добавленных/обновлённых/
+    деактивированных конфигов — по ним вызывающий код пересоберёт джобы."""
+    from bot.services.google_sheets_service import SyncReport
+
+    assert SyncReport().changed_config_ids == []          # default — пустой список
+
+    async with session_factory() as s:                    # добавление
+        svc = GoogleSheetsService(s, client=None)
+        report = await svc.sync_tasks(TASK_ROWS, dry_run=False)
+        await s.commit()
+        cfg = await s.scalar(select(TaskConfig).where(
+            TaskConfig.external_task_id == "articles_check_all"))
+        assert report.changed_config_ids == [cfg.id]
+        cfg_id = cfg.id
+
+    async with session_factory() as s:                    # обновление
+        svc = GoogleSheetsService(s, client=None)
+        report = await svc.sync_tasks(TASK_ROWS, dry_run=False)
+        await s.commit()
+        assert report.changed_config_ids == [cfg_id]
+
+    async with session_factory() as s:                    # деактивация
+        svc = GoogleSheetsService(s, client=None)
+        report = await svc.sync_tasks([], dry_run=False)
+        await s.commit()
+        assert report.changed_config_ids == [cfg_id]
