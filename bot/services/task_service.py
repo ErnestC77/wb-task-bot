@@ -74,7 +74,9 @@ class TaskService:
 
     async def create_instance_for(self, config: TaskConfig,
                                   scheduled_at: datetime) -> TaskInstance | None:
-        due_at = (datetime.combine(scheduled_at.date(), config.due_time)
+        due_at = (datetime.combine(
+                      scheduled_at.date() + timedelta(days=config.due_days_offset),
+                      config.due_time)
                   if config.due_time else scheduled_at + timedelta(hours=24))
         responsible = await self.resolve_responsible_user(config)
         snapshot = await self.build_snapshot(config, responsible)

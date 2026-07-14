@@ -166,6 +166,9 @@ class TaskConfig(TimestampMixin, Base):
     # nullable=True указан явно по той же причине, что и для `time` выше — атрибут `time`
     # в этом классе перекрывает импортированный тип для резолва всех аннотаций `time | None`.
     due_time: Mapped[time | None] = mapped_column(Time, nullable=True)  # срок «сегодня до HH:MM»
+    # Часть В: дедлайн через N дней ПОСЛЕ дня отправки; 0 — тот же день
+    # (прежнее поведение). server_default="0" — существующие строки получают 0.
+    due_days_offset: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     first_run_date: Mapped[date | None] = mapped_column(Date)
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)  # источник истины для recovery
     run_on_weekends: Mapped[bool] = mapped_column(Boolean, default=True)

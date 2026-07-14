@@ -146,3 +146,30 @@ async def test_postpone_to_tomorrow_after_several_days_uses_real_today(session, 
     assert got.postponed_to.date() > datetime(2026, 7, 13, 10, 0).date()  # не в прошлом
     # старая (сломанная) формула scheduled_date(07-10) + 1 день дала бы 07-11 — уже в прошлом
     assert got.postponed_to.date() != datetime(2026, 7, 11).date()
+
+
+async def test_due_at_respects_due_days_offset(session):
+    """Часть В: due_days_offset=2 — дедлайн через 2 дня после дня отправки."""
+    cfg, _ = await make_config(session)                  # due_time=12:00
+    cfg.due_days_offset = 2
+    await session.commit()
+    inst = await TaskService(session).create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+    assert inst.due_at == datetime(2026, 7, 12, 12, 0)
+
+
+async def test_due_at_offset_default_zero_keeps_same_day(session):
+    """default 0 — прежнее поведение «сегодня до HH:MM» (обратная совместимость)."""
+    cfg, _ = await make_config(session)
+    assert cfg.due_days_offset == 0
+    inst = await TaskService(session).create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+    assert inst.due_at == datetime(2026, 7, 10, 12, 0)
+
+
+async def test_due_at_without_due_time_ignores_offset(session):
+    """Без due_time дедлайн — прежние +24 часа, offset не участвует."""
+    cfg, _ = await make_config(session)
+    cfg.due_time = None
+    cfg.due_days_offset = 5
+    await session.commit()
+    inst = await TaskService(session).create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+    assert inst.due_at == datetime(2026, 7, 11, 9, 0)
