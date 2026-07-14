@@ -220,6 +220,24 @@ class SchedulerService:
                                    args=[self.bot, self.session_factory],
                                    id="status_notifications", misfire_grace_time=GRACE)
 
+    async def register_status_history_job(self) -> None:
+        """Часть Д: по образцу register_delivery_log_job — снимает job
+        "status_history" и, если status_history_log.enabled=True, регистрирует
+        status_history_job с интервалом status_history_log.interval_minutes.
+        Явный remove_job перед add_job — см. комментарий в register_report_job."""
+        from bot.services.google_sheets_service import status_history_job
+        from bot.services.setting_service import SettingService
+        async with self.session_factory() as session:
+            settings = SettingService(session)
+            enabled = bool(await settings.get("status_history_log.enabled"))
+            minutes = int(await settings.get("status_history_log.interval_minutes"))
+        if self.scheduler.get_job("status_history"):
+            self.scheduler.remove_job("status_history")
+        if enabled:
+            self.scheduler.add_job(status_history_job, "interval", minutes=minutes,
+                                   args=[self.bot, self.session_factory],
+                                   id="status_history", misfire_grace_time=GRACE)
+
 
 async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     from bot.database.repositories.task_repository import TaskRepository
@@ -251,4 +269,5 @@ async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     await svc.register_sync_job()
     await svc.register_delivery_log_job()
     await svc.register_status_notification_job()
+    await svc.register_status_history_job()
     return scheduler

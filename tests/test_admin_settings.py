@@ -333,3 +333,23 @@ async def test_status_notifications_settings_rebuild_status_notification_job(ses
                                       '["completed"]', scheduler_svc)
     assert ok is True
     scheduler_svc.register_status_notification_job.assert_not_awaited()
+
+
+async def test_status_history_settings_rebuild_status_history_job(session):
+    """Часть Д: правка status_history_log.* пересобирает ИМЕННО
+    status_history-job, а не соседние job'ы."""
+    cfg, valya = await make_config(session)
+    from bot.handlers.admin.settings import SCHEDULER_AFFECTING, apply_setting_input
+
+    assert "status_history_log.enabled" in SCHEDULER_AFFECTING
+    assert "status_history_log.interval_minutes" in SCHEDULER_AFFECTING
+
+    scheduler_svc = AsyncMock()
+    ok, _ = await apply_setting_input(session, valya,
+                                      "status_history_log.interval_minutes",
+                                      "30", scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_status_history_job.assert_awaited()
+    scheduler_svc.register_sync_job.assert_not_awaited()
+    scheduler_svc.register_delivery_log_job.assert_not_awaited()
+    scheduler_svc.register_status_notification_job.assert_not_awaited()
