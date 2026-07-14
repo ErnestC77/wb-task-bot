@@ -156,6 +156,11 @@ def _defs() -> list[SettingDef]:
                    ["in_progress", "completed", "problem", "overdue"],
                    "status_notifications",
                    "Какие смены статуса шлют уведомление (значения TaskStatus)"),
+        # --- status_history_log ---
+        SettingDef("status_history_log.enabled", bool, False, "status_history_log",
+                   "Выгружать историю смен статуса в лист «История статусов»"),
+        SettingDef("status_history_log.interval_minutes", int, 60, "status_history_log",
+                   "Интервал выгрузки истории статусов (минуты)", min_=5, max_=1440),
         # --- internal ---
         SettingDef("internal.settings_version", int, 1, "internal", is_editable=False),
     ]

@@ -25,7 +25,7 @@ settings_table = sa.table(
 # ВАЖНО: миграция не импортирует код приложения — фиксирует defaults на момент ревизии.
 # Task 7 определит полноценный SETTINGS_REGISTRY в коде; на момент этой ревизии он ещё
 # не существует, поэтому ниже — локальная копия ПОЛНОГО набора ключей registry
-# (86 ключей, 8 категорий), зафиксированных в бриф-плане.
+# (94 ключа, 11 категорий), зафиксированных в бриф-плане.
 SETTINGS_DEFAULTS: list[tuple[str, object, str, str]] = [
     # general (14)
     ("general.timezone", "Europe/Moscow", "str", "general"),
@@ -128,6 +128,9 @@ SETTINGS_DEFAULTS: list[tuple[str, object, str, str]] = [
     ("status_notifications.interval_minutes", 5, "int", "status_notifications"),
     ("status_notifications.statuses",
      ["in_progress", "completed", "problem", "overdue"], "json", "status_notifications"),
+    # status_history_log (2)
+    ("status_history_log.enabled", False, "bool", "status_history_log"),
+    ("status_history_log.interval_minutes", 60, "int", "status_history_log"),
     # internal (1)
     ("internal.settings_version", 1, "int", "internal"),
 ]

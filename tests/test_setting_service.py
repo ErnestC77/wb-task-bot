@@ -109,11 +109,11 @@ _TYPE_MAP = {"int": int, "bool": bool, "str": str, "json": object}
 
 def test_registry_matches_seed_migration_exactly():
     """SETTINGS_REGISTRY — единственный источник истины для допустимых ключей.
-    Он должен ТОЧНО (92 ключа) совпадать по составу, дефолтам, типам и категориям
+    Он должен ТОЧНО (94 ключа) совпадать по составу, дефолтам, типам и категориям
     с тем, что вставляет seed-миграция 0002_seed_defaults.py."""
     seed = _load_seed_defaults()
-    assert len(seed) == 92
-    assert len(SETTINGS_REGISTRY) == 92
+    assert len(seed) == 94
+    assert len(SETTINGS_REGISTRY) == 94
 
     seed_keys = {key for key, _, _, _ in seed}
     assert set(SETTINGS_REGISTRY.keys()) == seed_keys
@@ -130,7 +130,7 @@ def test_registry_matches_seed_migration_exactly():
     assert counts_by_category == {
         "general": 14, "article_check": 19, "approval": 10, "reminders": 14,
         "questions": 8, "reports": 12, "sync": 8, "internal": 1,
-        "delivery_log": 2, "status_notifications": 4,
+        "delivery_log": 2, "status_notifications": 4, "status_history_log": 2,
     }
 
 
@@ -173,3 +173,21 @@ async def test_status_notifications_settings_registered_with_defaults(session):
 def test_status_notifications_category_has_title():
     from bot.keyboards.admin.settings import CATEGORY_TITLES
     assert CATEGORY_TITLES["status_notifications"] == "Уведомления о статусах"
+
+
+async def test_status_history_log_settings_registered_with_defaults(session):
+    """Часть Д: настройки выгрузки истории статусов — обычные карточки,
+    отдельная категория status_history_log (не sync и не delivery_log)."""
+    from bot.services.setting_service import SETTINGS_REGISTRY, SettingService
+
+    svc = SettingService(session)
+    assert await svc.get("status_history_log.enabled") is False
+    assert await svc.get("status_history_log.interval_minutes") == 60
+    d = SETTINGS_REGISTRY["status_history_log.interval_minutes"]
+    assert (d.min_, d.max_, d.category) == (5, 1440, "status_history_log")
+    assert SETTINGS_REGISTRY["status_history_log.enabled"].category == "status_history_log"
+
+
+def test_status_history_log_category_has_title():
+    from bot.keyboards.admin.settings import CATEGORY_TITLES
+    assert CATEGORY_TITLES["status_history_log"] == "История статусов (лист)"

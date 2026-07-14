@@ -14,6 +14,7 @@ CATEGORY_TITLES: dict[str, str] = {
     "sync": "Синхронизация Google Sheets",
     "delivery_log": "Журнал отправок",
     "status_notifications": "Уведомления о статусах",
+    "status_history_log": "История статусов (лист)",
 }
 
 
