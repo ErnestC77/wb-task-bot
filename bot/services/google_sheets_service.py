@@ -413,3 +413,64 @@ async def auto_sync_job(bot, session_factory, scheduler_svc=None) -> None:
     if scheduler_svc is not None:
         for config_id in results["tasks"].changed_config_ids:
             await scheduler_svc.rebuild_config_job(config_id)
+
+
+DELIVERY_LOG_SHEET_NAME = "Журнал отправок"
+_DELIVERY_LOG_DT_FORMAT = "%d.%m.%Y %H:%M"
+
+
+async def delivery_log_job(bot, session_factory) -> None:
+    """Job-обработчик «Журнала отправок» (Часть Б; регистрируется
+    SchedulerService.register_delivery_log_job). По строке на каждую
+    фактически отправленную (delivery_status=SENT) TaskInstance, ещё не
+    выгруженную (sheet_logged_at IS NULL): задача, чат/тема, время отправки,
+    дедлайн (дата+время). Ничего не делает при delivery_log.enabled=False.
+
+    Ошибка Google Sheets API (сеть/лимиты/credentials) логируется, ни одна
+    строка НЕ помечается sheet_logged_at — весь пакет уйдёт повторно на
+    следующем интервале. Отправка в Telegram уже случилась раньше и от
+    успеха этого джоба не зависит."""
+    from bot.database.db import async_session_factory
+    from bot.database.repositories.task_repository import TaskRepository
+    from bot.database.repositories.topic_repository import TopicRepository
+
+    factory = session_factory or async_session_factory
+    async with factory() as session:
+        settings = SettingService(session)
+        if not bool(await settings.get("delivery_log.enabled")):
+            return
+        task_repo = TaskRepository(session)
+        topic_repo = TopicRepository(session)
+        instances = await task_repo.get_sent_unlogged()
+        if not instances:
+            return
+        rows: list[list] = []
+        for inst in instances:
+            topic_name = "—"
+            if inst.topic_id is not None:
+                topic = await topic_repo.get_by_id(inst.topic_id)
+                topic_name = topic.topic_name if topic else "—"
+            rows.append([
+                inst.title_snapshot,
+                topic_name,
+                (inst.message_sent_at.strftime(_DELIVERY_LOG_DT_FORMAT)
+                 if inst.message_sent_at else "—"),
+                (inst.due_at.strftime(_DELIVERY_LOG_DT_FORMAT)
+                 if inst.due_at else "—"),
+            ])
+        spreadsheet_id = (str(await settings.get("sync.spreadsheet_id"))
+                          or get_settings().google_sheets_spreadsheet_id)
+        try:
+            client = SheetsClient(
+                get_settings().google_sheets_credentials_file, spreadsheet_id)
+            client.append_rows(DELIVERY_LOG_SHEET_NAME, rows)
+        except Exception:  # noqa: BLE001 — недоступность Sheets не роняет планировщик
+            logger.exception(
+                "delivery_log_job: не удалось дописать %d строк(и) в лист %r — "
+                "строки будут повторно взяты на следующем интервале",
+                len(rows), DELIVERY_LOG_SHEET_NAME)
+            return
+        now = datetime.utcnow()
+        for inst in instances:
+            inst.sheet_logged_at = now
+        await session.commit()

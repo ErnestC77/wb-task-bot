@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from bot.database.models import AdminAuditLog, Article, TaskConfig, Topic, User
 from bot.database.repositories.audit_repository import AuditRepository
 from bot.services.google_sheets_service import (
-    GoogleSheetsService, SheetsClient, auto_sync_job,
+    GoogleSheetsService, SheetsClient, auto_sync_job, delivery_log_job,
 )
 from bot.services.setting_service import SettingService
 
@@ -444,3 +444,114 @@ def test_append_rows_creates_missing_sheet_with_header():
     ws.append_row.assert_called_once_with(
         ["Задача", "Чат/тема", "Время отправки", "Дедлайн"])
     ws.append_rows.assert_called_once_with([["a", "b", "c", "d"]])
+
+
+# ---------------------------------------------------------------------------
+# Часть Б: delivery_log_job — выгрузка отправленных задач в «Журнал отправок»
+# ---------------------------------------------------------------------------
+
+async def _make_delivery_instances(session_factory) -> dict[str, int]:
+    """Три инстанса одного конфига: SENT (должен попасть в журнал), PENDING и
+    FAILED (не должны). Возвращает {'sent': id, 'pending': id, 'failed': id}."""
+    from bot.database.models import DeliveryStatus, Role
+    from bot.database.repositories.task_repository import TaskRepository
+    from bot.database.repositories.topic_repository import TopicRepository
+    from bot.database.repositories.user_repository import UserRepository
+    from bot.services.task_service import TaskService
+
+    async with session_factory() as s:
+        topic = await TopicRepository(s).upsert(topic_key="goods", topic_name="Товары",
+                                                message_thread_id=10)
+        user = await UserRepository(s).upsert(telegram_id=10, name="Валя",
+                                              role=Role.MANAGER_WB)
+        cfg = await TaskRepository(s).upsert_config(dict(
+            external_task_id="log_me", title="Проверка артикулов", scenario="simple",
+            schedule_type="daily", topic_id=topic.id, due_time=time(12, 0),
+            responsible_user_id=user.id, is_active=True))
+        svc = TaskService(s)
+        sent = await svc.create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+        pending = await svc.create_instance_for(cfg, datetime(2026, 7, 11, 9, 0))
+        failed = await svc.create_instance_for(cfg, datetime(2026, 7, 12, 9, 0))
+        sent.delivery_status = DeliveryStatus.SENT
+        sent.message_sent_at = datetime(2026, 7, 10, 9, 1)
+        failed.delivery_status = DeliveryStatus.FAILED
+        await s.commit()
+        return {"sent": sent.id, "pending": pending.id, "failed": failed.id}
+
+
+def _delivery_log_env():
+    fake_settings = MagicMock(google_sheets_credentials_file="creds.json",
+                              google_sheets_spreadsheet_id="sheet-id")
+    fake_client = MagicMock()
+    return fake_settings, fake_client
+
+
+async def _enable_delivery_log(session_factory) -> None:
+    async with session_factory() as s:
+        await SettingService(s).set("delivery_log.enabled", True, actor_user_id=None)
+        await s.commit()
+
+
+async def test_delivery_log_job_skips_when_disabled(session_factory):
+    from bot.database.models import TaskInstance
+
+    ids = await _make_delivery_instances(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client) as client_cls, \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await delivery_log_job(AsyncMock(), session_factory)   # enabled=False по умолчанию
+    client_cls.assert_not_called()
+    async with session_factory() as s:
+        inst = await s.get(TaskInstance, ids["sent"])
+        assert inst.sheet_logged_at is None
+
+
+async def test_delivery_log_job_logs_only_sent_once(session_factory):
+    """Только SENT попадает в журнал, ровно один раз (идемпотентность через
+    sheet_logged_at), одним пакетным append_rows с корректной строкой."""
+    from bot.database.models import TaskInstance
+
+    ids = await _make_delivery_instances(session_factory)
+    await _enable_delivery_log(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client), \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await delivery_log_job(AsyncMock(), session_factory)
+        await delivery_log_job(AsyncMock(), session_factory)   # повторный прогон
+
+    fake_client.append_rows.assert_called_once()               # дублей нет
+    sheet_name, rows = fake_client.append_rows.call_args.args
+    assert sheet_name == "Журнал отправок"
+    assert rows == [["Проверка артикулов", "Товары",
+                     "10.07.2026 09:01", "10.07.2026 12:00"]]
+    async with session_factory() as s:
+        assert (await s.get(TaskInstance, ids["sent"])).sheet_logged_at is not None
+        assert (await s.get(TaskInstance, ids["pending"])).sheet_logged_at is None
+        assert (await s.get(TaskInstance, ids["failed"])).sheet_logged_at is None
+
+
+async def test_delivery_log_job_error_keeps_rows_for_retry(session_factory):
+    """Недоступность Sheets: исключение ловится, ни одна строка не помечена —
+    на следующем интервале весь пакет уходит повторно."""
+    from bot.database.models import TaskInstance
+
+    ids = await _make_delivery_instances(session_factory)
+    await _enable_delivery_log(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    fake_client.append_rows.side_effect = RuntimeError("quota exceeded")
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client), \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await delivery_log_job(AsyncMock(), session_factory)   # не должен упасть наружу
+        async with session_factory() as s:
+            assert (await s.get(TaskInstance, ids["sent"])).sheet_logged_at is None
+        fake_client.append_rows.side_effect = None             # Sheets «ожил»
+        await delivery_log_job(AsyncMock(), session_factory)
+    assert fake_client.append_rows.call_count == 2             # ретрай состоялся
+    async with session_factory() as s:
+        assert (await s.get(TaskInstance, ids["sent"])).sheet_logged_at is not None
