@@ -134,6 +134,11 @@ def _defs() -> list[SettingDef]:
         SettingDef("sync.conflict_policy", str, "admin_wins", "sync",
                    choices=("admin_wins", "sheets_wins")),
         SettingDef("sync.dry_run_default", bool, True, "sync"),
+        # --- delivery_log ---
+        SettingDef("delivery_log.enabled", bool, False, "delivery_log",
+                   "Выгружать отправленные задачи в лист «Журнал отправок»"),
+        SettingDef("delivery_log.interval_minutes", int, 60, "delivery_log",
+                   "Интервал выгрузки журнала (минуты)", min_=5, max_=1440),
         # --- internal ---
         SettingDef("internal.settings_version", int, 1, "internal", is_editable=False),
     ]

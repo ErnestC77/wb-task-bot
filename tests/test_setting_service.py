@@ -109,11 +109,11 @@ _TYPE_MAP = {"int": int, "bool": bool, "str": str, "json": object}
 
 def test_registry_matches_seed_migration_exactly():
     """SETTINGS_REGISTRY — единственный источник истины для допустимых ключей.
-    Он должен ТОЧНО (86 ключей) совпадать по составу, дефолтам, типам и категориям
+    Он должен ТОЧНО (88 ключей) совпадать по составу, дефолтам, типам и категориям
     с тем, что вставляет seed-миграция 0002_seed_defaults.py."""
     seed = _load_seed_defaults()
-    assert len(seed) == 86
-    assert len(SETTINGS_REGISTRY) == 86
+    assert len(seed) == 88
+    assert len(SETTINGS_REGISTRY) == 88
 
     seed_keys = {key for key, _, _, _ in seed}
     assert set(SETTINGS_REGISTRY.keys()) == seed_keys
@@ -130,4 +130,23 @@ def test_registry_matches_seed_migration_exactly():
     assert counts_by_category == {
         "general": 14, "article_check": 19, "approval": 10, "reminders": 14,
         "questions": 8, "reports": 12, "sync": 8, "internal": 1,
+        "delivery_log": 2,
     }
+
+
+async def test_delivery_log_settings_registered_with_defaults(session):
+    """Часть Б: настройки журнала отправок — обычные карточки в общем
+    реестре, категория delivery_log (не sync)."""
+    from bot.services.setting_service import SETTINGS_REGISTRY, SettingService
+
+    svc = SettingService(session)
+    assert await svc.get("delivery_log.enabled") is False
+    assert await svc.get("delivery_log.interval_minutes") == 60
+    d = SETTINGS_REGISTRY["delivery_log.interval_minutes"]
+    assert (d.min_, d.max_, d.category) == (5, 1440, "delivery_log")
+    assert SETTINGS_REGISTRY["delivery_log.enabled"].category == "delivery_log"
+
+
+def test_delivery_log_category_has_title():
+    from bot.keyboards.admin.settings import CATEGORY_TITLES
+    assert CATEGORY_TITLES["delivery_log"] == "Журнал отправок"

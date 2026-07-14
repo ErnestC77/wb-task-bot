@@ -12,6 +12,7 @@ CATEGORY_TITLES: dict[str, str] = {
     "questions": "Вопросы",
     "reports": "Отчеты",
     "sync": "Синхронизация Google Sheets",
+    "delivery_log": "Журнал отправок",
 }
 
 

@@ -119,6 +119,9 @@ SETTINGS_DEFAULTS: list[tuple[str, object, str, str]] = [
     ("sync.interval_minutes", 60, "int", "sync"),
     ("sync.conflict_policy", "admin_wins", "str", "sync"),
     ("sync.dry_run_default", True, "bool", "sync"),
+    # delivery_log (2)
+    ("delivery_log.enabled", False, "bool", "delivery_log"),
+    ("delivery_log.interval_minutes", 60, "int", "delivery_log"),
     # internal (1)
     ("internal.settings_version", 1, "int", "internal"),
 ]
