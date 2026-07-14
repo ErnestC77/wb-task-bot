@@ -330,3 +330,41 @@ def test_cancel_edit_keyboard_pack_unpack_roundtrip():
     kb = cancel_edit_keyboard(config_id=11)
     cb = SchCb.unpack(kb.inline_keyboard[0][0].callback_data)
     assert cb.a == "card" and cb.id == 11
+
+
+def test_due_days_offset_registered_in_field_lists():
+    from bot.handlers.admin.schedules import (
+        FIELD_TITLES, SCHEDULE_FIELD_LIST, SCHEDULE_FIELDS,
+    )
+    assert "due_days_offset" in SCHEDULE_FIELDS
+    # добавлено строго В КОНЕЦ: вставка в середину сдвинула бы индексы
+    # whitelist-редактирования по idx в SCHEDULE_FIELD_LIST
+    assert SCHEDULE_FIELD_LIST[-1] == "due_days_offset"
+    assert FIELD_TITLES["due_days_offset"] == "Срок: дней после отправки"
+
+
+async def test_due_days_offset_valid_value_applies(session):
+    owner = await _owner(session)
+    cfg, _ = await make_config(session)
+    from bot.handlers.admin.schedules import apply_schedule_field
+    ok, _ = await apply_schedule_field(session, owner, cfg.id, "due_days_offset", "2", None)
+    assert ok is True and cfg.due_days_offset == 2
+
+
+async def test_due_days_offset_rejects_out_of_range(session):
+    owner = await _owner(session)
+    cfg, _ = await make_config(session)
+    from bot.handlers.admin.schedules import apply_schedule_field
+    ok, _ = await apply_schedule_field(session, owner, cfg.id, "due_days_offset", "-1", None)
+    assert ok is False
+    ok, _ = await apply_schedule_field(session, owner, cfg.id, "due_days_offset", "31", None)
+    assert ok is False
+    assert cfg.due_days_offset == 0                       # значение не тронуто
+
+
+async def test_schedule_card_shows_due_days_offset(session):
+    cfg, _ = await make_config(session)
+    cfg.due_days_offset = 3
+    await session.commit()
+    from bot.handlers.admin.schedules import render_schedule_card
+    assert "Срок: дней после отправки: 3" in render_schedule_card(cfg)

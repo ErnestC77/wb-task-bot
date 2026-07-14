@@ -74,13 +74,15 @@ router = Router(name=__name__)
 
 SCHEDULE_FIELDS: frozenset[str] = frozenset({
     "schedule_type", "schedule_value", "schedule_interval", "time", "due_time",
-    "first_run_date", "run_on_weekends", "skip_holidays",
+    "due_days_offset", "first_run_date", "run_on_weekends", "skip_holidays",
 })
 
 # Порядок для whitelist-редактирования по индексу (не по имени поля из callback).
+# due_days_offset добавлено СТРОГО В КОНЕЦ — вставка в середину сдвинула бы
+# индексы существующих полей.
 SCHEDULE_FIELD_LIST: list[str] = [
     "schedule_type", "schedule_value", "schedule_interval", "time", "due_time",
-    "first_run_date", "run_on_weekends", "skip_holidays",
+    "first_run_date", "run_on_weekends", "skip_holidays", "due_days_offset",
 ]
 
 FIELD_TITLES: dict[str, str] = {
@@ -89,6 +91,7 @@ FIELD_TITLES: dict[str, str] = {
     "schedule_interval": "Интервал (дней)",
     "time": "Время создания",
     "due_time": "Срок (due_time)",
+    "due_days_offset": "Срок: дней после отправки",
     "first_run_date": "Дата первого запуска",
     "run_on_weekends": "Запуск в выходные",
     "skip_holidays": "Пропуск праздников",
@@ -106,6 +109,8 @@ def _parse(field: str, raw: str, schedule_type: str | None) -> object:
         return value
     if field == "schedule_interval":
         return validate_int(raw, 1, 365)
+    if field == "due_days_offset":
+        return validate_int(raw, 0, 30)                 # 0 — дедлайн в день отправки
     if field in ("time", "due_time"):
         return validate_time_str(raw)
     if field == "first_run_date":
@@ -165,6 +170,7 @@ def render_schedule_card(cfg: TaskConfig) -> str:
         f"Интервал (дней): {cfg.schedule_interval if cfg.schedule_interval is not None else '—'}",
         f"Время: {cfg.time.strftime('%H:%M') if cfg.time else '—'}",
         f"Срок (due_time): {cfg.due_time.strftime('%H:%M') if cfg.due_time else '—'}",
+        f"Срок: дней после отправки: {cfg.due_days_offset}",
         f"Дата первого запуска: {cfg.first_run_date.isoformat() if cfg.first_run_date else '—'}",
         f"Запуск в выходные: {'да' if cfg.run_on_weekends else 'нет'}",
         f"Пропуск праздников: {'да' if cfg.skip_holidays else 'нет'}",
@@ -321,6 +327,8 @@ def _hint_for(field: str, schedule_type: str | None) -> str:
         return "Введите интервал в днях (целое число, 1-365):"
     if field in ("time", "due_time"):
         return "Введите время в формате ЧЧ:ММ:"
+    if field == "due_days_offset":
+        return "Введите число дней после дня отправки (0-30, 0 — тот же день):"
     if field == "first_run_date":
         return "Введите дату в формате ГГГГ-ММ-ДД:"
     if field == "schedule_value":
