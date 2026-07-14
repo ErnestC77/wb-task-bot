@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** После синка из Google Sheets APScheduler-джобы пересобираются автоматически; каждая фактически отправленная задача дописывается строкой в новый лист «Журнал отправок»; время отправки и дедлайн (с offset в днях) задаются в таблице независимо.
+**Goal:** После синка из Google Sheets APScheduler-джобы пересобираются автоматически; каждая фактически отправленная задача дописывается строкой в новый лист «Журнал отправок»; время отправки и дедлайн (с offset в днях) задаются в таблице независимо. Дополнено Частями Г/Д/Е (Tasks 12-21): owner/partner получают Telegram-уведомления о сменах статуса задач (настраиваемый список статусов), полная история смен статуса выгружается в новый лист «История статусов», а настройка `reminders.overdue_after_hours` реально управляет моментом перехода в OVERDUE (исправлен баг жёстких +24ч).
 
-**Architecture:** Три независимые части. A: `sync_tasks()` возвращает изменённые `config_id` через `SyncReport.changed_config_ids`, и оба вызывающих пути (админ-«Применить» и `auto_sync_job`) после коммита вызывают существующий идемпотентный `SchedulerService.rebuild_config_job()`. B: новая колонка `TaskInstance.sheet_logged_at` + write-scope у `SheetsClient` + периодический `delivery_log_job` (по образцу `auto_sync_job`) + пара настроек `delivery_log.*` + `register_delivery_log_job()`. C: новая колонка `TaskConfig.due_days_offset` + чтение `time` из собственной колонки листа + редактирование offset в админ-панели.
+**Architecture:** Три независимые части. A: `sync_tasks()` возвращает изменённые `config_id` через `SyncReport.changed_config_ids`, и оба вызывающих пути (админ-«Применить» и `auto_sync_job`) после коммита вызывают существующий идемпотентный `SchedulerService.rebuild_config_job()`. B: новая колонка `TaskInstance.sheet_logged_at` + write-scope у `SheetsClient` + периодический `delivery_log_job` (по образцу `auto_sync_job`) + пара настроек `delivery_log.*` + `register_delivery_log_job()`. C: новая колонка `TaskConfig.due_days_offset` + чтение `time` из собственной колонки листа + редактирование offset в админ-панели. Г: колонка `TaskLog.owner_notified_at` + периодический `status_notification_job` (poll по `TaskLog`, Telegram-рассылка ролям из `status_notifications.targets`, фильтр статусов — настройка `status_notifications.statuses`). Д: колонка `TaskLog.sheet_logged_at` + периодический `status_history_job` (выгрузка ВСЕХ записей `TaskLog` в лист «История статусов»). Е: `register_instance_jobs` становится async и читает `reminders.overdue_after_hours` вместо жёстких 24 часов.
 
 **Tech Stack:** Python 3.12, aiogram 3, SQLAlchemy 2 async, Alembic, APScheduler, gspread, pytest (asyncio_mode=auto; юнит-тесты на SQLite in-memory через фикстуры `session_factory`/`session` из `tests/conftest.py`, интеграционные — маркер `pg`, реальный PostgreSQL через `TEST_DATABASE_URL`).
 
@@ -22,9 +22,9 @@
 - **Тексты интерфейса и docstrings — на русском**, формат даты-времени для людей — `%d.%m.%Y %H:%M`.
 - **Никаких новых зависимостей** — только то, что уже в `requirements.txt`.
 - **Линтера/тайпчекера в проекте нет** (`requirements-dev.txt`: только pytest/pytest-asyncio/aiosqlite) — верификация каждого шага только через pytest.
-- **Цепочка Alembic-миграций:** текущий head — `0003`; эта работа добавляет `0004` (Task 4) и `0005` (Task 9), строго в этом порядке.
+- **Цепочка Alembic-миграций:** текущий head — `0003`; эта работа добавляет `0004` (Task 4), `0005` (Task 9), `0006` (Task 12) и `0007` (Task 16), строго в этом порядке.
 - Команда прогона тестов: `python -m pytest <файл> -q` (маркер `pg` по умолчанию исключён через `pytest.ini` `addopts = -m "not pg"`).
-- Вне рамок (по утверждённой спеке): фикс `scheduler_recovery_service.py`; логирование remind1/remind2/overdue в журнал; отдельный раздел админки для журнала (обычных карточек настроек достаточно); живое чтение Sheets в момент отправки.
+- Вне рамок (по утверждённой спеке): фикс `scheduler_recovery_service.py` (в т.ч. его собственные жёсткие `+24ч` в `recover_jobs` — см. Note в Task 21); логирование remind1/remind2/overdue в журнал; отдельный раздел админки для журнала (обычных карточек настроек достаточно); живое чтение Sheets в момент отправки; хуки в 8 вызовах `transition_status` (Части Г/Д — poll-модель по `TaskLog`); редактирование `status_notifications.statuses` через саму Google-таблицу (только кнопки бота).
 
 ---
 
@@ -1591,6 +1591,1705 @@ git commit -m "feat: due_days_offset editable in schedules admin section (0-30)"
 
 ---
 
+## Часть Г — уведомление owner/partner о смене статуса задачи
+
+Poll-модель: каждая смена статуса уже пишется в `TaskLog` единственным механизмом смены статуса — `TaskRepository.transition_status` (8 мест вызова по проекту, НИ ОДНО не трогаем). Периодический job выбирает ещё не разосланные записи по новой колонке-флагу `TaskLog.owner_notified_at`. Список уведомляемых статусов — настройка `status_notifications.statuses` (спека, ред. a3e6de6): default — 4 статуса `in_progress/completed/problem/overdue`, owner редактирует список через обычную карточку настроек (НЕ через Google-таблицу).
+
+### Task 12: колонка `TaskLog.owner_notified_at` + выборка неуведомлённых записей
+
+**Files:**
+- Create: `bot/database/migrations/versions/0006_owner_notified_at.py`
+- Modify: `bot/database/models.py` (класс `TaskLog`, после `created_at`, ~строка 248)
+- Modify: `bot/database/repositories/task_repository.py`
+- Test: `tests/test_task_repository.py`
+
+**Interfaces:**
+- Consumes: существующие `TaskLog`, хелпер `make_instance(session)` из `tests/test_task_repository.py` (возвращает `repo, cfg, inst, user, ts, snapshot`).
+- Produces: `TaskLog.owner_notified_at: datetime | None` (nullable, без default); `TaskRepository.get_unnotified_status_logs(statuses: list[str]) -> list[TaskLog]` — записи, где `new_status` входит в переданный список и `owner_notified_at IS NULL`, отсортированы по `id`. Task 14 вызывает его со списком из настройки `status_notifications.statuses`.
+
+- [ ] **Step 1: Написать падающий тест**
+
+Добавить в конец `tests/test_task_repository.py` (`TaskLog` и `datetime` уже импортированы в начале файла):
+
+```python
+async def test_get_unnotified_status_logs_filters_status_and_flag(session):
+    """Часть Г: для уведомлений выбираются только записи с new_status из
+    переданного списка, по которым уведомление ещё не отправлено
+    (owner_notified_at IS NULL)."""
+    repo, cfg, inst, user, ts, snapshot = await make_instance(session)
+    fresh = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.take",
+                    old_status="created", new_status="in_progress")
+    done = TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                   old_status="in_progress", new_status="overdue",
+                   owner_notified_at=datetime(2026, 7, 10, 10, 0))   # уже уведомлён
+    other = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.done",
+                    old_status="in_progress", new_status="waiting_approval")
+    session.add_all([fresh, done, other])
+    await session.commit()
+
+    rows = await repo.get_unnotified_status_logs(
+        ["in_progress", "completed", "problem", "overdue"])
+    assert [r.id for r in rows] == [fresh.id]              # done и other — мимо
+```
+
+- [ ] **Step 2: Убедиться, что тест падает**
+
+Run: `python -m pytest tests/test_task_repository.py::test_get_unnotified_status_logs_filters_status_and_flag -q`
+Expected: FAIL — `TypeError: 'owner_notified_at' is an invalid keyword argument for TaskLog`.
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/database/models.py`, в классе `TaskLog`, после строки `created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())` добавить:
+
+```python
+    # Telegram-уведомление о смене статуса отправлено (Часть Г) — защита от
+    # повторных уведомлений; идемпотентность НЕЗАВИСИМА от sheet_logged_at
+    # Части Д (два разных потребителя одной и той же записи TaskLog).
+    owner_notified_at: Mapped[datetime | None] = mapped_column(DateTime)
+```
+
+3b. В `bot/database/repositories/task_repository.py` добавить метод в конец класса `TaskRepository` (после `get_sent_unlogged` из Task 4):
+
+```python
+    async def get_unnotified_status_logs(self, statuses: list[str]) -> list[TaskLog]:
+        """Часть Г: записи TaskLog с new_status из переданного списка, по
+        которым Telegram-уведомление ещё не отправлялось (owner_notified_at
+        IS NULL). Список статусов передаёт вызывающий job — значение настройки
+        status_notifications.statuses (bot/services/status_notification_service.py)."""
+        return list(await self.session.scalars(
+            select(TaskLog).where(
+                TaskLog.new_status.in_(statuses),
+                TaskLog.owner_notified_at.is_(None))
+            .order_by(TaskLog.id)))
+```
+
+3c. Создать `bot/database/migrations/versions/0006_owner_notified_at.py`:
+
+```python
+"""add owner_notified_at to task_logs
+
+Revision ID: 0006
+Revises: 0005
+Create Date: 2026-07-14 12:20:00.000000
+
+"""
+import sqlalchemy as sa
+from alembic import op
+
+revision = "0006"
+down_revision = "0005"
+
+
+def upgrade() -> None:
+    op.add_column(
+        "task_logs",
+        sa.Column("owner_notified_at", sa.DateTime(), nullable=True))
+
+
+def downgrade() -> None:
+    op.drop_column("task_logs", "owner_notified_at")
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_task_repository.py tests/test_models.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Проверка миграции (если доступен тестовый Postgres)**
+
+Run: `python -m pytest tests/integration/test_alembic_migration.py -m pg -q`
+Expected: PASS при заданном `TEST_DATABASE_URL`; иначе — «skipped» (module-level skip в `tests/integration/conftest.py`, это нормально).
+
+- [ ] **Step 6: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/database/models.py bot/database/repositories/task_repository.py bot/database/migrations/versions/0006_owner_notified_at.py tests/test_task_repository.py
+git commit -m "feat: TaskLog.owner_notified_at column and unnotified status log query"
+```
+
+---
+
+### Task 13: настройки `status_notifications.*` в реестре
+
+**Files:**
+- Modify: `bot/services/setting_service.py` (функция `_defs()`, после блока `# --- delivery_log ---` из Task 6)
+- Modify: `bot/keyboards/admin/settings.py` (словарь `CATEGORY_TITLES`)
+- Test: `tests/test_setting_service.py`
+
+**Interfaces:**
+- Consumes: существующие `SettingDef`, `SETTINGS_REGISTRY`, `SettingService.get`.
+- Produces: ключи `status_notifications.enabled` (bool, default `False`), `status_notifications.targets` (object/список ролей, default `["owner"]`), `status_notifications.interval_minutes` (int, default `5`, min 1, max 60), `status_notifications.statuses` (object/список строк-значений `TaskStatus`, default `["in_progress", "completed", "problem", "overdue"]`); новая категория `"status_notifications"` с заголовком. Tasks 14 и 15 читают эти ключи. `object`-настройки редактируются в общей карточке через `validate_json_value` — как `reminders.targets`; отдельный UI не нужен.
+
+- [ ] **Step 1: Написать падающие тесты**
+
+Добавить в конец `tests/test_setting_service.py`:
+
+```python
+async def test_status_notifications_settings_registered_with_defaults(session):
+    """Часть Г: настройки уведомлений о статусах — обычные карточки в общем
+    реестре, отдельная категория status_notifications. Список уведомляемых
+    статусов — настройка с default из 4 статусов (спека, ред. a3e6de6)."""
+    from bot.services.setting_service import SETTINGS_REGISTRY, SettingService
+
+    svc = SettingService(session)
+    assert await svc.get("status_notifications.enabled") is False
+    assert await svc.get("status_notifications.targets") == ["owner"]
+    assert await svc.get("status_notifications.interval_minutes") == 5
+    assert await svc.get("status_notifications.statuses") == [
+        "in_progress", "completed", "problem", "overdue"]
+    d = SETTINGS_REGISTRY["status_notifications.interval_minutes"]
+    assert (d.min_, d.max_, d.category) == (1, 60, "status_notifications")
+    assert SETTINGS_REGISTRY["status_notifications.statuses"].value_type is object
+    assert SETTINGS_REGISTRY["status_notifications.enabled"].category == "status_notifications"
+
+
+def test_status_notifications_category_has_title():
+    from bot.keyboards.admin.settings import CATEGORY_TITLES
+    assert CATEGORY_TITLES["status_notifications"] == "Уведомления о статусах"
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `python -m pytest tests/test_setting_service.py -q`
+Expected: FAIL — `KeyError: 'Неизвестная настройка: status_notifications.enabled'` и `KeyError: 'status_notifications'`.
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/services/setting_service.py`, в `_defs()`, после строки `SettingDef("delivery_log.interval_minutes", int, 60, "delivery_log", "Интервал выгрузки журнала (минуты)", min_=5, max_=1440),` (блок Task 6) добавить:
+
+```python
+        # --- status_notifications ---
+        SettingDef("status_notifications.enabled", bool, False, "status_notifications",
+                   "Уведомлять о смене статуса задач в Telegram"),
+        SettingDef("status_notifications.targets", object, ["owner"],
+                   "status_notifications",
+                   "Роли-получатели уведомлений о статусах (owner/partner)"),
+        SettingDef("status_notifications.interval_minutes", int, 5,
+                   "status_notifications",
+                   "Интервал проверки новых смен статуса (минуты)", min_=1, max_=60),
+        # Список уведомляемых статусов — настройка, НЕ хардкод (спека, ред.
+        # a3e6de6): default — те же 4, что предлагались фиксированными; owner
+        # может сузить/расширить список через кнопки бота (validate_json_value,
+        # как reminders.targets). Редактирование через Google-таблицу — вне рамок.
+        SettingDef("status_notifications.statuses", object,
+                   ["in_progress", "completed", "problem", "overdue"],
+                   "status_notifications",
+                   "Какие смены статуса шлют уведомление (значения TaskStatus)"),
+```
+
+3b. В `bot/keyboards/admin/settings.py`, в `CATEGORY_TITLES`, после строки `"delivery_log": "Журнал отправок",` (Task 6) добавить:
+
+```python
+    "status_notifications": "Уведомления о статусах",
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_setting_service.py tests/test_admin_settings.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/setting_service.py bot/keyboards/admin/settings.py tests/test_setting_service.py
+git commit -m "feat: status_notifications settings category incl. configurable statuses list"
+```
+
+---
+
+### Task 14: фоновый `status_notification_job`
+
+**Files:**
+- Create: `bot/services/status_notification_service.py`
+- Create: `tests/test_status_notification_service.py`
+
+**Interfaces:**
+- Consumes: `TaskRepository.get_unnotified_status_logs(statuses)` (Task 12), настройки `status_notifications.enabled` / `.targets` / `.statuses` (Task 13), существующие `UserRepository.get_active_by_role(role)` / `.get_by_id(user_id)`, `TaskRepository.get_instance(instance_id)`, `html_escape` из `bot/utils/html_utils.py`, паттерн ролевой рассылки из `reminder_service.py` (`(Role.OWNER, "owner"), (Role.PARTNER, "partner")`).
+- Produces: `status_notification_job(bot, session_factory) -> None` (Task 15 регистрирует его по id `"status_notifications"`); `resolve_log_actor(users: UserRepository, log: TaskLog) -> str` — имя пользователя по `user_id` или `log.action` для авто-переходов (Task 19 переиспользует для колонки «Кто»).
+
+- [ ] **Step 1: Написать падающие тесты**
+
+Создать `tests/test_status_notification_service.py` целиком:
+
+```python
+"""Тесты уведомлений owner/partner о смене статуса задач (Часть Г).
+
+Poll-модель: job читает TaskLog (все переходы уже пишутся туда через
+TaskRepository.transition_status), сами 8 вызовов transition_status не
+трогаются. Список уведомляемых статусов — настройка
+status_notifications.statuses, читается при каждом прогоне.
+"""
+from datetime import datetime
+from unittest.mock import AsyncMock
+
+from bot.database.models import Role, TaskLog
+from bot.database.repositories.task_repository import TaskRepository
+from bot.database.repositories.user_repository import UserRepository
+from bot.services.setting_service import SettingService
+from bot.services.status_notification_service import status_notification_job
+
+
+async def seed_logs(session_factory) -> dict[str, int]:
+    """Owner (tg=99), исполнитель Валя, инстанс и четыре записи TaskLog:
+    notify — created -> in_progress от Вали (в default-списке),
+    auto  — авто-переход в overdue (user_id IS NULL, в default-списке),
+    done  — in_progress -> completed от Вали (в default-списке),
+    other — переход в waiting_approval (ВНЕ default-списка)."""
+    from bot.services.task_service import TaskService
+
+    async with session_factory() as s:
+        await UserRepository(s).upsert(telegram_id=99, name="Хозяин", role=Role.OWNER)
+        valya = await UserRepository(s).upsert(telegram_id=10, name="Валя",
+                                               role=Role.MANAGER_WB)
+        cfg = await TaskRepository(s).upsert_config(dict(
+            external_task_id="notify_me", title="Проверка", scenario="simple",
+            schedule_type="daily", responsible_user_id=valya.id, is_active=True))
+        inst = await TaskService(s).create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+        notify = TaskLog(task_instance_id=inst.id, user_id=valya.id, action="task.take",
+                         old_status="created", new_status="in_progress")
+        auto = TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                       old_status="in_progress", new_status="overdue")
+        done = TaskLog(task_instance_id=inst.id, user_id=valya.id, action="task.done",
+                       old_status="in_progress", new_status="completed")
+        other = TaskLog(task_instance_id=inst.id, user_id=valya.id, action="task.approve",
+                        old_status="in_progress", new_status="waiting_approval")
+        s.add_all([notify, auto, done, other])
+        await s.commit()
+        return {"notify": notify.id, "auto": auto.id,
+                "done": done.id, "other": other.id}
+
+
+async def _enable(session_factory) -> None:
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+
+
+async def _set_statuses(session_factory, statuses: list[str]) -> None:
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.statuses", statuses,
+                                    actor_user_id=None)
+        await s.commit()
+
+
+async def test_disabled_by_default_sends_nothing(session_factory):
+    ids = await seed_logs(session_factory)
+    bot = AsyncMock()
+    await status_notification_job(bot, session_factory)   # enabled=False по умолчанию
+    bot.send_message.assert_not_awaited()
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["notify"])).owner_notified_at is None
+
+
+async def test_notifies_owner_once_with_default_statuses(session_factory):
+    """Default-список (4 статуса): уведомляются notify/auto/done ровно один
+    раз; other (waiting_approval) — нет. Текст содержит задачу, переход и кто
+    сменил (имя пользователя или action для авто-перехода)."""
+    ids = await seed_logs(session_factory)
+    await _enable(session_factory)
+    bot = AsyncMock()
+    await status_notification_job(bot, session_factory)
+    await status_notification_job(bot, session_factory)   # повторный прогон — без дублей
+
+    assert bot.send_message.await_count == 3              # notify + auto + done
+    calls = bot.send_message.await_args_list
+    assert {c.kwargs["chat_id"] for c in calls} == {99}   # только owner
+    texts = [c.kwargs["text"] for c in calls]
+    assert any("Проверка" in t and "created → in_progress" in t and "Валя" in t
+               for t in texts)
+    assert any("in_progress → overdue" in t and "auto:overdue" in t for t in texts)
+    assert any("in_progress → completed" in t for t in texts)
+    async with session_factory() as s:
+        for key in ("notify", "auto", "done"):
+            assert (await s.get(TaskLog, ids[key])).owner_notified_at is not None
+        assert (await s.get(TaskLog, ids["other"])).owner_notified_at is None
+
+
+async def test_statuses_setting_is_dynamic_filter(session_factory):
+    """status_notifications.statuses читается при КАЖДОМ прогоне: сужение до
+    ["completed"] отключает in_progress/overdue, но completed уведомляет;
+    расширение списком с waiting_approval включает и его."""
+    ids = await seed_logs(session_factory)
+    await _enable(session_factory)
+    await _set_statuses(session_factory, ["completed"])
+    bot = AsyncMock()
+    await status_notification_job(bot, session_factory)
+
+    assert bot.send_message.await_count == 1              # только done
+    assert "in_progress → completed" in bot.send_message.await_args.kwargs["text"]
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["done"])).owner_notified_at is not None
+        assert (await s.get(TaskLog, ids["notify"])).owner_notified_at is None
+        assert (await s.get(TaskLog, ids["auto"])).owner_notified_at is None
+
+    await _set_statuses(session_factory, ["completed", "waiting_approval"])
+    await status_notification_job(bot, session_factory)
+
+    assert bot.send_message.await_count == 2              # +1: только other
+    assert "waiting_approval" in bot.send_message.await_args.kwargs["text"]
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["other"])).owner_notified_at is not None
+        assert (await s.get(TaskLog, ids["notify"])).owner_notified_at is None
+
+
+async def test_targets_add_partner_recipients(session_factory):
+    await seed_logs(session_factory)
+    await _enable(session_factory)
+    async with session_factory() as s:
+        await UserRepository(s).upsert(telegram_id=77, name="Партнёр", role=Role.PARTNER)
+        await SettingService(s).set("status_notifications.targets",
+                                    ["owner", "partner"], actor_user_id=None)
+        await s.commit()
+    bot = AsyncMock()
+    await status_notification_job(bot, session_factory)
+    chats = sorted(c.kwargs["chat_id"] for c in bot.send_message.await_args_list)
+    assert chats == [77, 77, 77, 99, 99, 99]              # 3 записи x 2 получателя
+
+
+async def test_send_failure_does_not_break_job(session_factory):
+    """Заблокировавший бота получатель не рушит job и не зацикливает рассылку:
+    запись всё равно помечается обработанной (тот же паттерн, что эскалация
+    в overdue_job)."""
+    ids = await seed_logs(session_factory)
+    await _enable(session_factory)
+    bot = AsyncMock()
+    bot.send_message.side_effect = RuntimeError("bot was blocked by the user")
+    await status_notification_job(bot, session_factory)   # не должен упасть наружу
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["notify"])).owner_notified_at is not None
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `python -m pytest tests/test_status_notification_service.py -q`
+Expected: FAIL на этапе сбора — `ModuleNotFoundError: No module named 'bot.services.status_notification_service'`.
+
+- [ ] **Step 3: Реализация**
+
+Создать `bot/services/status_notification_service.py` целиком:
+
+```python
+"""Job-обработчик уведомлений owner/partner о смене статуса задач (Часть Г).
+
+Poll-модель: каждая смена статуса уже пишется в TaskLog единственным
+механизмом смены статуса — TaskRepository.transition_status; этот job
+периодически выбирает ещё не разосланные записи (owner_notified_at IS NULL)
+с new_status из настройки status_notifications.statuses и рассылает их ролям
+из status_notifications.targets. Сами 8 мест вызова transition_status не
+трогаются (осознанное решение спеки).
+
+Запись помечается обработанной даже при сбое отправки конкретному получателю
+(тот же паттерн, что эскалация в overdue_job) — иначе один заблокировавший
+бота получатель зациклил бы рассылку на каждом интервале.
+"""
+from datetime import datetime
+
+from bot.database.models import Role, TaskLog
+from bot.database.repositories.task_repository import TaskRepository
+from bot.database.repositories.user_repository import UserRepository
+from bot.services.setting_service import SettingService
+from bot.utils.html_utils import html_escape
+from bot.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+
+async def resolve_log_actor(users: UserRepository, log: TaskLog) -> str:
+    """Кто сменил статус: имя пользователя по user_id; для автоматических
+    переходов (user_id IS NULL, например "auto:overdue") — action записи.
+    Переиспользуется status_history_job (Часть Д, колонка «Кто»)."""
+    if log.user_id is not None:
+        user = await users.get_by_id(log.user_id)
+        if user is not None:
+            return user.name
+    return log.action
+
+
+async def status_notification_job(bot, session_factory) -> None:
+    """(регистрируется SchedulerService.register_status_notification_job)
+    Ничего не делает при status_notifications.enabled=False. Список
+    уведомляемых статусов читается из status_notifications.statuses при
+    КАЖДОМ прогоне (не хардкодится — спека, ред. a3e6de6)."""
+    from bot.database.db import async_session_factory
+
+    factory = session_factory or async_session_factory
+    async with factory() as session:
+        settings = SettingService(session)
+        if not bool(await settings.get("status_notifications.enabled")):
+            return
+        task_repo = TaskRepository(session)
+        users = UserRepository(session)
+        statuses = [str(s) for s in await settings.get("status_notifications.statuses")]
+        logs = await task_repo.get_unnotified_status_logs(statuses)
+        if not logs:
+            return
+        targets = list(await settings.get("status_notifications.targets"))
+        recipients = []
+        for role, key in ((Role.OWNER, "owner"), (Role.PARTNER, "partner")):
+            if key in targets:
+                recipients.extend(await users.get_active_by_role(role))
+        now = datetime.utcnow()
+        for log in logs:
+            inst = await task_repo.get_instance(log.task_instance_id)
+            title = inst.title_snapshot if inst else f"задача #{log.task_instance_id}"
+            who = await resolve_log_actor(users, log)
+            text = (f"📌 {html_escape(title)}: {log.old_status or '—'} → "
+                    f"{log.new_status} — {html_escape(who)}")
+            for u in recipients:
+                try:
+                    await bot.send_message(chat_id=u.telegram_id, text=text)
+                except Exception as exc:  # noqa: BLE001 — не рушим job
+                    logger.warning("Status notification to %s failed: %s",
+                                   u.telegram_id, exc)
+            log.owner_notified_at = now
+        await session.commit()
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_status_notification_service.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/status_notification_service.py tests/test_status_notification_service.py
+git commit -m "feat: status_notification_job notifies owner/partner about task status changes"
+```
+
+---
+
+### Task 15: регистрация `status_notifications`-джоба и связка с настройками
+
+**Files:**
+- Modify: `bot/services/scheduler_service.py` (новый метод после `register_delivery_log_job` из Task 8; функция `setup_scheduler`)
+- Modify: `bot/handlers/admin/settings.py` (`SCHEDULER_AFFECTING`; хвост ветки в `apply_setting_input`)
+- Test: `tests/test_scheduler_service.py`, `tests/test_admin_settings.py`
+
+**Interfaces:**
+- Consumes: `status_notification_job(bot, session_factory)` (Task 14), настройки `status_notifications.enabled` / `.interval_minutes` (Task 13), паттерн `register_delivery_log_job` (явный `remove_job` перед `add_job`, `GRACE`).
+- Produces: `SchedulerService.register_status_notification_job() -> None` (job id `"status_notifications"`, интервальный триггер, `args=[self.bot, self.session_factory]`, `misfire_grace_time=GRACE`); вызов при старте бота в `setup_scheduler`; правка `status_notifications.enabled`/`.interval_minutes` через общий редактор настроек пересобирает именно этот job. ВАЖНО: `status_notifications.statuses` в `SCHEDULER_AFFECTING` НЕ входит — она влияет только на фильтр-запрос job'а (читается при каждом прогоне), а не на его регистрацию.
+
+- [ ] **Step 1: Написать падающие тесты**
+
+1a. Добавить в конец `tests/test_scheduler_service.py`:
+
+```python
+async def test_register_status_notification_job_enabled_interval_no_duplicates(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", True,
+                                    actor_user_id=None)
+        await SettingService(s).set("status_notifications.interval_minutes", 10,
+                                    actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    for _ in range(3):                                 # идемпотентно, без дублей
+        await svc.register_status_notification_job()
+    jobs = [j for j in scheduler.get_jobs() if j.id == "status_notifications"]
+    assert len(jobs) == 1
+    assert jobs[0].trigger.interval.total_seconds() == 10 * 60
+
+
+async def test_register_status_notification_job_disabled_removes_job(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_status_notification_job()
+    assert scheduler.get_job("status_notifications") is not None
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", False,
+                                    actor_user_id=None)
+        await s.commit()
+    await svc.register_status_notification_job()
+    assert scheduler.get_job("status_notifications") is None   # выключили — job снят
+
+
+async def test_setup_scheduler_registers_status_notification_job(session_factory):
+    from bot.services.scheduler_service import setup_scheduler
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_notifications.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+    scheduler = await setup_scheduler(AsyncMock(), session_factory)
+    assert scheduler.get_job("status_notifications") is not None
+```
+
+1b. Добавить в конец `tests/test_admin_settings.py` (зеркало теста Task 8; `make_config` и `AsyncMock` уже импортированы в файле):
+
+```python
+async def test_status_notifications_settings_rebuild_status_notification_job(session):
+    """Часть Г: правка status_notifications.enabled/.interval_minutes через
+    общий редактор настроек пересобирает ИМЕННО status_notifications-job;
+    statuses — НЕ scheduler-affecting (влияет только на фильтр job'а)."""
+    cfg, valya = await make_config(session)
+    from bot.handlers.admin.settings import SCHEDULER_AFFECTING, apply_setting_input
+
+    assert "status_notifications.enabled" in SCHEDULER_AFFECTING
+    assert "status_notifications.interval_minutes" in SCHEDULER_AFFECTING
+    assert "status_notifications.statuses" not in SCHEDULER_AFFECTING
+
+    scheduler_svc = AsyncMock()
+    ok, _ = await apply_setting_input(session, valya,
+                                      "status_notifications.interval_minutes",
+                                      "10", scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_status_notification_job.assert_awaited()
+    scheduler_svc.register_sync_job.assert_not_awaited()
+    scheduler_svc.register_delivery_log_job.assert_not_awaited()
+
+    # statuses сохраняется без пересборки каких-либо job'ов
+    scheduler_svc.reset_mock()
+    ok, _ = await apply_setting_input(session, valya, "status_notifications.statuses",
+                                      '["completed"]', scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_status_notification_job.assert_not_awaited()
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `python -m pytest tests/test_scheduler_service.py tests/test_admin_settings.py -q`
+Expected: FAIL — `AttributeError: 'SchedulerService' object has no attribute 'register_status_notification_job'` (реальный сервис) и `assert "status_notifications.enabled" in SCHEDULER_AFFECTING`.
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/services/scheduler_service.py` после метода `register_delivery_log_job` (Task 8) добавить:
+
+```python
+    async def register_status_notification_job(self) -> None:
+        """Часть Г: по образцу register_sync_job/register_delivery_log_job —
+        снимает job "status_notifications" и, если
+        status_notifications.enabled=True, регистрирует status_notification_job
+        с интервалом status_notifications.interval_minutes. Явный remove_job
+        перед add_job — см. комментарий в register_report_job (до
+        scheduler.start() replace_existing не заменяет, а копит job'ы)."""
+        from bot.services.setting_service import SettingService
+        from bot.services.status_notification_service import status_notification_job
+        async with self.session_factory() as session:
+            settings = SettingService(session)
+            enabled = bool(await settings.get("status_notifications.enabled"))
+            minutes = int(await settings.get("status_notifications.interval_minutes"))
+        if self.scheduler.get_job("status_notifications"):
+            self.scheduler.remove_job("status_notifications")
+        if enabled:
+            self.scheduler.add_job(status_notification_job, "interval", minutes=minutes,
+                                   args=[self.bot, self.session_factory],
+                                   id="status_notifications", misfire_grace_time=GRACE)
+```
+
+3b. В `setup_scheduler` того же файла заменить (хвост после Task 8):
+
+```python
+    await svc.register_report_job()
+    await svc.register_sync_job()
+    await svc.register_delivery_log_job()
+    return scheduler
+```
+
+на:
+
+```python
+    await svc.register_report_job()
+    await svc.register_sync_job()
+    await svc.register_delivery_log_job()
+    await svc.register_status_notification_job()
+    return scheduler
+```
+
+3c. В `bot/handlers/admin/settings.py` заменить (версия после Task 8):
+
+```python
+SCHEDULER_AFFECTING = {"reports.weekday", "reports.time",
+                       "sync.auto_enabled", "sync.interval_minutes",
+                       "delivery_log.enabled", "delivery_log.interval_minutes"}
+```
+
+на:
+
+```python
+SCHEDULER_AFFECTING = {"reports.weekday", "reports.time",
+                       "sync.auto_enabled", "sync.interval_minutes",
+                       "delivery_log.enabled", "delivery_log.interval_minutes",
+                       "status_notifications.enabled",
+                       "status_notifications.interval_minutes"}
+```
+
+(`status_notifications.statuses` сюда НЕ добавлять — см. Interfaces.)
+
+3d. Там же, в `apply_setting_input`, заменить хвост ветки (версия после Task 8; длинный комментарий про «Коммит ДО пересборки job'а» не трогать):
+
+```python
+        await session.commit()
+        if key.startswith("reports."):
+            await scheduler_svc.register_report_job()
+        elif key.startswith("delivery_log."):
+            await scheduler_svc.register_delivery_log_job()
+        else:
+            await scheduler_svc.register_sync_job()
+```
+
+на:
+
+```python
+        await session.commit()
+        if key.startswith("reports."):
+            await scheduler_svc.register_report_job()
+        elif key.startswith("delivery_log."):
+            await scheduler_svc.register_delivery_log_job()
+        elif key.startswith("status_notifications."):
+            await scheduler_svc.register_status_notification_job()
+        else:
+            await scheduler_svc.register_sync_job()
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_scheduler_service.py tests/test_admin_settings.py tests/test_admin_sync.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/scheduler_service.py bot/handlers/admin/settings.py tests/test_scheduler_service.py tests/test_admin_settings.py
+git commit -m "feat: register_status_notification_job wired to startup and settings"
+```
+
+---
+
+## Часть Д — вкладка «История статусов» в Google Sheets
+
+Второй, независимый от Части Г потребитель тех же записей `TaskLog`: разные получатели (Sheets vs Telegram), разный охват (ВСЕ переходы, без фильтра по статусу) и СВОЙ флаг идемпотентности `TaskLog.sheet_logged_at` (не путать ни с `owner_notified_at` Части Г, ни с `TaskInstance.sheet_logged_at` Части Б — это колонка на ДРУГОЙ таблице).
+
+### Task 16: колонка `TaskLog.sheet_logged_at` + выборка невыгруженных записей
+
+**Files:**
+- Create: `bot/database/migrations/versions/0007_task_log_sheet_logged_at.py`
+- Modify: `bot/database/models.py` (класс `TaskLog`, после `owner_notified_at` из Task 12)
+- Modify: `bot/database/repositories/task_repository.py`
+- Test: `tests/test_task_repository.py`
+
+**Interfaces:**
+- Consumes: `TaskLog.owner_notified_at` (Task 12), хелпер `make_instance(session)` из `tests/test_task_repository.py`.
+- Produces: `TaskLog.sheet_logged_at: datetime | None` (nullable, без default); `TaskRepository.get_unlogged_status_logs() -> list[TaskLog]` — ВСЕ записи с `sheet_logged_at IS NULL` (без фильтра по статусу), отсортированы по `id`. Task 19 использует оба.
+
+- [ ] **Step 1: Написать падающий тест**
+
+Добавить в конец `tests/test_task_repository.py`:
+
+```python
+async def test_get_unlogged_status_logs_no_status_filter(session):
+    """Часть Д: для «Истории статусов» выбираются ВСЕ записи TaskLog (без
+    фильтра по статусу) с sheet_logged_at IS NULL — независимо от флага
+    owner_notified_at Части Г (два потребителя, две независимые пометки)."""
+    repo, cfg, inst, user, ts, snapshot = await make_instance(session)
+    any_status = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.done",
+                         old_status="in_progress", new_status="waiting_approval")
+    notified = TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                       old_status="created", new_status="overdue",
+                       owner_notified_at=datetime(2026, 7, 11, 9, 0))  # флаг Г не мешает
+    logged = TaskLog(task_instance_id=inst.id, user_id=user.id, action="task.take",
+                     old_status="created", new_status="in_progress",
+                     sheet_logged_at=datetime(2026, 7, 10, 10, 0))     # уже выгружена
+    session.add_all([any_status, notified, logged])
+    await session.commit()
+
+    rows = await repo.get_unlogged_status_logs()
+    assert [r.id for r in rows] == [any_status.id, notified.id]
+```
+
+- [ ] **Step 2: Убедиться, что тест падает**
+
+Run: `python -m pytest tests/test_task_repository.py::test_get_unlogged_status_logs_no_status_filter -q`
+Expected: FAIL — `TypeError: 'sheet_logged_at' is an invalid keyword argument for TaskLog`.
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/database/models.py`, в классе `TaskLog`, после строк с `owner_notified_at` (Task 12) добавить:
+
+```python
+    # выгружено в лист «История статусов» (Часть Д) — идемпотентность
+    # status_history_job. НЕ путать с owner_notified_at выше (Часть Г,
+    # Telegram-уведомления) и с TaskInstance.sheet_logged_at (Часть Б,
+    # «Журнал отправок» — другая таблица и другой лист).
+    sheet_logged_at: Mapped[datetime | None] = mapped_column(DateTime)
+```
+
+3b. В `bot/database/repositories/task_repository.py` добавить метод после `get_unnotified_status_logs` (Task 12):
+
+```python
+    async def get_unlogged_status_logs(self) -> list[TaskLog]:
+        """Часть Д: ВСЕ записи TaskLog (без фильтра по статусу — полная
+        история), ещё не выгруженные в лист «История статусов»
+        (sheet_logged_at IS NULL)."""
+        return list(await self.session.scalars(
+            select(TaskLog).where(TaskLog.sheet_logged_at.is_(None))
+            .order_by(TaskLog.id)))
+```
+
+3c. Создать `bot/database/migrations/versions/0007_task_log_sheet_logged_at.py`:
+
+```python
+"""add sheet_logged_at to task_logs
+
+Revision ID: 0007
+Revises: 0006
+Create Date: 2026-07-14 12:30:00.000000
+
+"""
+import sqlalchemy as sa
+from alembic import op
+
+revision = "0007"
+down_revision = "0006"
+
+
+def upgrade() -> None:
+    op.add_column(
+        "task_logs",
+        sa.Column("sheet_logged_at", sa.DateTime(), nullable=True))
+
+
+def downgrade() -> None:
+    op.drop_column("task_logs", "sheet_logged_at")
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_task_repository.py tests/test_models.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Проверка миграции (если доступен тестовый Postgres)**
+
+Run: `python -m pytest tests/integration/test_alembic_migration.py -m pg -q`
+Expected: PASS при заданном `TEST_DATABASE_URL`; иначе «skipped».
+
+- [ ] **Step 6: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/database/models.py bot/database/repositories/task_repository.py bot/database/migrations/versions/0007_task_log_sheet_logged_at.py tests/test_task_repository.py
+git commit -m "feat: TaskLog.sheet_logged_at column and unlogged status log query"
+```
+
+---
+
+### Task 17: `append_rows` — заголовок листа как параметр
+
+У «Истории статусов» другие колонки, чем у «Журнала отправок», а `append_rows` из Task 5 создаёт лист с жёстко зашитым `DELIVERY_LOG_HEADER`. Заголовок становится обязательным третьим параметром; обновляются оба существующих call-site и их тесты.
+
+**Files:**
+- Modify: `bot/services/google_sheets_service.py` (метод `SheetsClient.append_rows` из Task 5; вызов в `delivery_log_job` из Task 7)
+- Modify: `tests/test_sheets_service.py` (импорт; тесты `test_append_rows_*` из Task 5; тест `test_delivery_log_job_logs_only_sent_once` из Task 7)
+- Modify: `tests/integration/test_delivery_log_pg.py` (распаковка `call_args.args`)
+
+**Interfaces:**
+- Consumes: `SheetsClient.append_rows(sheet_name, rows)` и `DELIVERY_LOG_HEADER` (Task 5), `delivery_log_job` (Task 7).
+- Produces: `SheetsClient.append_rows(sheet_name: str, rows: list[list], header: list[str]) -> None` — заголовок автосоздаваемого листа передаётся вызывающим кодом. Task 19 вызывает с `STATUS_HISTORY_HEADER`.
+
+- [ ] **Step 1: Написать падающий тест**
+
+Добавить в конец `tests/test_sheets_service.py`:
+
+```python
+def test_append_rows_uses_passed_header_for_new_sheet():
+    """Часть Д: заголовок автосоздаваемого листа — параметр append_rows, а не
+    константа «Журнала отправок»: у «Истории статусов» другие колонки."""
+    import gspread
+    ws = MagicMock()
+    fake = MagicMock()
+    fake.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("нет листа")
+    fake.add_worksheet.return_value = ws
+    client = _client_with_fake_spreadsheet(fake)
+    header = ["Задача", "Был статус", "Стал статус", "Кто", "Когда"]
+    client.append_rows("История статусов", [["a", "b", "c", "d", "e"]], header)
+    fake.add_worksheet.assert_called_once_with(title="История статусов", rows=1, cols=5)
+    ws.append_row.assert_called_once_with(header)
+    ws.append_rows.assert_called_once_with([["a", "b", "c", "d", "e"]])
+```
+
+- [ ] **Step 2: Убедиться, что тест падает**
+
+Run: `python -m pytest tests/test_sheets_service.py::test_append_rows_uses_passed_header_for_new_sheet -q`
+Expected: FAIL — `TypeError: SheetsClient.append_rows() takes 3 positional arguments but 4 were given`.
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/services/google_sheets_service.py` заменить метод `append_rows` (Task 5) целиком:
+
+```python
+    def append_rows(self, sheet_name: str, rows: list[list],
+                    header: list[str]) -> None:
+        """Дописывает строки в лист; если листа нет — создаёт его и пишет
+        первой строкой переданный заголовок (Часть Б — «Журнал отправок»,
+        Часть Д — «История статусов»)."""
+        try:
+            ws = self._spreadsheet.worksheet(sheet_name)
+        except gspread.exceptions.WorksheetNotFound:
+            ws = self._spreadsheet.add_worksheet(
+                title=sheet_name, rows=1, cols=len(header))
+            ws.append_row(header)
+        ws.append_rows(rows)
+```
+
+3b. Там же, в `delivery_log_job` (Task 7), заменить строку:
+
+```python
+            client.append_rows(DELIVERY_LOG_SHEET_NAME, rows)
+```
+
+на:
+
+```python
+            client.append_rows(DELIVERY_LOG_SHEET_NAME, rows, DELIVERY_LOG_HEADER)
+```
+
+3c. В `tests/test_sheets_service.py` заменить импорт сервиса (версия после Task 7):
+
+```python
+from bot.services.google_sheets_service import (
+    GoogleSheetsService, SheetsClient, auto_sync_job, delivery_log_job,
+)
+```
+
+на:
+
+```python
+from bot.services.google_sheets_service import (
+    DELIVERY_LOG_HEADER, GoogleSheetsService, SheetsClient, auto_sync_job,
+    delivery_log_job,
+)
+```
+
+3d. Там же заменить оба теста `append_rows` из Task 5 целиком:
+
+```python
+def test_append_rows_appends_to_existing_sheet():
+    ws = MagicMock()
+    fake = MagicMock()
+    fake.worksheet.return_value = ws
+    client = _client_with_fake_spreadsheet(fake)
+    client.append_rows("Журнал отправок", [["Задача 1", "Товары",
+                                            "10.07.2026 09:01", "10.07.2026 12:00"]],
+                       DELIVERY_LOG_HEADER)
+    ws.append_rows.assert_called_once_with(
+        [["Задача 1", "Товары", "10.07.2026 09:01", "10.07.2026 12:00"]])
+    fake.add_worksheet.assert_not_called()
+
+
+def test_append_rows_creates_missing_sheet_with_header():
+    import gspread
+    ws = MagicMock()
+    fake = MagicMock()
+    fake.worksheet.side_effect = gspread.exceptions.WorksheetNotFound("нет листа")
+    fake.add_worksheet.return_value = ws
+    client = _client_with_fake_spreadsheet(fake)
+    client.append_rows("Журнал отправок", [["a", "b", "c", "d"]], DELIVERY_LOG_HEADER)
+    ws.append_row.assert_called_once_with(
+        ["Задача", "Чат/тема", "Время отправки", "Дедлайн"])
+    ws.append_rows.assert_called_once_with([["a", "b", "c", "d"]])
+```
+
+3e. Там же, в `test_delivery_log_job_logs_only_sent_once` (Task 7), заменить:
+
+```python
+    fake_client.append_rows.assert_called_once()               # дублей нет
+    sheet_name, rows = fake_client.append_rows.call_args.args
+    assert sheet_name == "Журнал отправок"
+```
+
+на:
+
+```python
+    fake_client.append_rows.assert_called_once()               # дублей нет
+    sheet_name, rows, header = fake_client.append_rows.call_args.args
+    assert sheet_name == "Журнал отправок"
+    assert header == DELIVERY_LOG_HEADER
+```
+
+3f. В `tests/integration/test_delivery_log_pg.py` (Task 7) заменить:
+
+```python
+    fake_client.append_rows.assert_called_once()
+    _sheet, rows = fake_client.append_rows.call_args.args
+```
+
+на:
+
+```python
+    fake_client.append_rows.assert_called_once()
+    _sheet, rows, _header = fake_client.append_rows.call_args.args
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_sheets_service.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Интеграционный pg-тест (если доступен тестовый Postgres)**
+
+Run: `python -m pytest tests/integration/test_delivery_log_pg.py -m pg -q`
+Expected: PASS при заданном `TEST_DATABASE_URL`; иначе «skipped».
+
+- [ ] **Step 6: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/google_sheets_service.py tests/test_sheets_service.py tests/integration/test_delivery_log_pg.py
+git commit -m "refactor: SheetsClient.append_rows takes sheet header as parameter"
+```
+
+---
+
+### Task 18: настройки `status_history_log.*` в реестре
+
+**Files:**
+- Modify: `bot/services/setting_service.py` (функция `_defs()`, после блока `# --- status_notifications ---` из Task 13)
+- Modify: `bot/keyboards/admin/settings.py` (словарь `CATEGORY_TITLES`)
+- Test: `tests/test_setting_service.py`
+
+**Interfaces:**
+- Consumes: существующие `SettingDef`, `SETTINGS_REGISTRY`, `SettingService.get`.
+- Produces: ключи `status_history_log.enabled` (bool, default `False`) и `status_history_log.interval_minutes` (int, default `60`, min 5, max 1440 — как у `delivery_log`), новая категория `"status_history_log"` с заголовком. Tasks 19 и 20 читают эти ключи.
+
+- [ ] **Step 1: Написать падающие тесты**
+
+Добавить в конец `tests/test_setting_service.py`:
+
+```python
+async def test_status_history_log_settings_registered_with_defaults(session):
+    """Часть Д: настройки выгрузки истории статусов — обычные карточки,
+    отдельная категория status_history_log (не sync и не delivery_log)."""
+    from bot.services.setting_service import SETTINGS_REGISTRY, SettingService
+
+    svc = SettingService(session)
+    assert await svc.get("status_history_log.enabled") is False
+    assert await svc.get("status_history_log.interval_minutes") == 60
+    d = SETTINGS_REGISTRY["status_history_log.interval_minutes"]
+    assert (d.min_, d.max_, d.category) == (5, 1440, "status_history_log")
+    assert SETTINGS_REGISTRY["status_history_log.enabled"].category == "status_history_log"
+
+
+def test_status_history_log_category_has_title():
+    from bot.keyboards.admin.settings import CATEGORY_TITLES
+    assert CATEGORY_TITLES["status_history_log"] == "История статусов (лист)"
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `python -m pytest tests/test_setting_service.py -q`
+Expected: FAIL — `KeyError: 'Неизвестная настройка: status_history_log.enabled'` и `KeyError: 'status_history_log'`.
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/services/setting_service.py`, в `_defs()`, после блока `# --- status_notifications ---` (Task 13, последняя строка блока — `SettingDef("status_notifications.statuses", ...)`) добавить:
+
+```python
+        # --- status_history_log ---
+        SettingDef("status_history_log.enabled", bool, False, "status_history_log",
+                   "Выгружать историю смен статуса в лист «История статусов»"),
+        SettingDef("status_history_log.interval_minutes", int, 60, "status_history_log",
+                   "Интервал выгрузки истории статусов (минуты)", min_=5, max_=1440),
+```
+
+3b. В `bot/keyboards/admin/settings.py`, в `CATEGORY_TITLES`, после строки `"status_notifications": "Уведомления о статусах",` (Task 13) добавить:
+
+```python
+    "status_history_log": "История статусов (лист)",
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_setting_service.py tests/test_admin_settings.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/setting_service.py bot/keyboards/admin/settings.py tests/test_setting_service.py
+git commit -m "feat: status_history_log settings category"
+```
+
+---
+
+### Task 19: фоновый `status_history_job`
+
+**Files:**
+- Modify: `bot/services/google_sheets_service.py` (новые константы и функция после `delivery_log_job` из Task 7)
+- Test: `tests/test_sheets_service.py`
+
+**Interfaces:**
+- Consumes: `TaskRepository.get_unlogged_status_logs()` (Task 16), `SheetsClient.append_rows(sheet_name, rows, header)` (Task 17), настройки `status_history_log.enabled` / `sync.spreadsheet_id` (Task 18), `resolve_log_actor(users, log)` (Task 14), `TaskRepository.get_instance`, `_DELIVERY_LOG_DT_FORMAT` (Task 7, общий человекочитаемый формат `%d.%m.%Y %H:%M`), хелперы `_delivery_log_env()` и `_client_with_fake_spreadsheet` в тестах (Tasks 5/7), модульный `logger`.
+- Produces: `status_history_job(bot, session_factory) -> None`, константы `STATUS_HISTORY_SHEET_NAME = "История статусов"` и `STATUS_HISTORY_HEADER = ["Задача", "Был статус", "Стал статус", "Кто", "Когда"]`. Task 20 регистрирует job по id `"status_history"`.
+
+- [ ] **Step 1: Написать падающие тесты**
+
+1a. В `tests/test_sheets_service.py` заменить импорт сервиса (версия после Task 17):
+
+```python
+from bot.services.google_sheets_service import (
+    DELIVERY_LOG_HEADER, GoogleSheetsService, SheetsClient, auto_sync_job,
+    delivery_log_job,
+)
+```
+
+на:
+
+```python
+from bot.services.google_sheets_service import (
+    DELIVERY_LOG_HEADER, GoogleSheetsService, SheetsClient, auto_sync_job,
+    delivery_log_job, status_history_job,
+)
+```
+
+1b. Добавить в конец файла:
+
+```python
+# ---------------------------------------------------------------------------
+# Часть Д: status_history_job — выгрузка истории статусов в «История статусов»
+# ---------------------------------------------------------------------------
+
+async def _make_status_logs(session_factory) -> dict[str, int]:
+    """Инстанс + четыре записи TaskLog: first (old_status IS NULL — первое
+    создание), manual (переход от Вали), auto (user_id IS NULL — авто-переход)
+    и logged (уже выгруженная — не должна попасть в лист повторно)."""
+    from bot.database.models import Role, TaskLog
+    from bot.database.repositories.task_repository import TaskRepository
+    from bot.database.repositories.user_repository import UserRepository
+    from bot.services.task_service import TaskService
+
+    async with session_factory() as s:
+        valya = await UserRepository(s).upsert(telegram_id=10, name="Валя",
+                                               role=Role.MANAGER_WB)
+        cfg = await TaskRepository(s).upsert_config(dict(
+            external_task_id="history_me", title="Проверка артикулов",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=valya.id, is_active=True))
+        inst = await TaskService(s).create_instance_for(cfg, datetime(2026, 7, 10, 9, 0))
+        first = TaskLog(task_instance_id=inst.id, user_id=None, action="task.create",
+                        old_status=None, new_status="created",
+                        created_at=datetime(2026, 7, 10, 9, 0))
+        manual = TaskLog(task_instance_id=inst.id, user_id=valya.id, action="task.take",
+                         old_status="created", new_status="in_progress",
+                         created_at=datetime(2026, 7, 10, 9, 5))
+        auto = TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                       old_status="in_progress", new_status="overdue",
+                       created_at=datetime(2026, 7, 11, 9, 0))
+        logged = TaskLog(task_instance_id=inst.id, user_id=valya.id, action="task.done",
+                         old_status="overdue", new_status="completed",
+                         created_at=datetime(2026, 7, 11, 12, 0),
+                         sheet_logged_at=datetime(2026, 7, 11, 13, 0))
+        s.add_all([first, manual, auto, logged])
+        await s.commit()
+        return {"first": first.id, "manual": manual.id,
+                "auto": auto.id, "logged": logged.id}
+
+
+async def _enable_status_history(session_factory) -> None:
+    async with session_factory() as s:
+        await SettingService(s).set("status_history_log.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+
+
+async def test_status_history_job_skips_when_disabled(session_factory):
+    from bot.database.models import TaskLog
+
+    ids = await _make_status_logs(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client) as client_cls, \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await status_history_job(AsyncMock(), session_factory)  # enabled=False по умолчанию
+    client_cls.assert_not_called()
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["manual"])).sheet_logged_at is None
+
+
+async def test_status_history_job_logs_every_transition_once(session_factory):
+    """КАЖДАЯ невыгруженная запись TaskLog попадает в лист ровно один раз:
+    без фильтра по статусу; old_status IS NULL -> «—»; для авто-переходов
+    (user_id IS NULL) колонка «Кто» показывает action, а не падает на None."""
+    from bot.database.models import TaskLog
+
+    ids = await _make_status_logs(session_factory)
+    await _enable_status_history(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client), \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await status_history_job(AsyncMock(), session_factory)
+        await status_history_job(AsyncMock(), session_factory)  # повторный прогон
+
+    fake_client.append_rows.assert_called_once()                # дублей нет
+    sheet_name, rows, header = fake_client.append_rows.call_args.args
+    assert sheet_name == "История статусов"
+    assert header == ["Задача", "Был статус", "Стал статус", "Кто", "Когда"]
+    assert rows == [
+        ["Проверка артикулов", "—", "created", "task.create", "10.07.2026 09:00"],
+        ["Проверка артикулов", "created", "in_progress", "Валя", "10.07.2026 09:05"],
+        ["Проверка артикулов", "in_progress", "overdue", "auto:overdue",
+         "11.07.2026 09:00"],
+    ]
+    async with session_factory() as s:
+        for key in ("first", "manual", "auto"):
+            assert (await s.get(TaskLog, ids[key])).sheet_logged_at is not None
+        # Часть Г не затронута: свой флаг owner_notified_at этот job не трогает
+        assert (await s.get(TaskLog, ids["auto"])).owner_notified_at is None
+
+
+async def test_status_history_job_error_keeps_rows_for_retry(session_factory):
+    """Сбой Google API: исключение ловится, ничего не помечено — весь пакет
+    уходит повторно на следующем интервале (та же обработка ошибок, что у
+    delivery_log_job, Часть Б)."""
+    from bot.database.models import TaskLog
+
+    ids = await _make_status_logs(session_factory)
+    await _enable_status_history(session_factory)
+    fake_settings, fake_client = _delivery_log_env()
+    fake_client.append_rows.side_effect = RuntimeError("quota exceeded")
+    with patch("bot.services.google_sheets_service.SheetsClient",
+               return_value=fake_client), \
+         patch("bot.services.google_sheets_service.get_settings",
+               return_value=fake_settings):
+        await status_history_job(AsyncMock(), session_factory)  # не должен упасть наружу
+        async with session_factory() as s:
+            assert (await s.get(TaskLog, ids["manual"])).sheet_logged_at is None
+        fake_client.append_rows.side_effect = None              # Sheets «ожил»
+        await status_history_job(AsyncMock(), session_factory)
+    assert fake_client.append_rows.call_count == 2              # ретрай состоялся
+    async with session_factory() as s:
+        assert (await s.get(TaskLog, ids["manual"])).sheet_logged_at is not None
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `python -m pytest tests/test_sheets_service.py -q`
+Expected: FAIL на этапе сбора — `ImportError: cannot import name 'status_history_job'`.
+
+- [ ] **Step 3: Реализация**
+
+В `bot/services/google_sheets_service.py` после функции `delivery_log_job` (Task 7) добавить:
+
+```python
+STATUS_HISTORY_SHEET_NAME = "История статусов"
+STATUS_HISTORY_HEADER = ["Задача", "Был статус", "Стал статус", "Кто", "Когда"]
+
+
+async def status_history_job(bot, session_factory) -> None:
+    """Job-обработчик листа «История статусов» (Часть Д; регистрируется
+    SchedulerService.register_status_history_job — Task 20). По строке на
+    КАЖДУЮ запись TaskLog без фильтра по статусу — полная хронология смен
+    статуса, в отличие от настраиваемого списка уведомляемых статусов
+    Части Г. Идемпотентность — через TaskLog.sheet_logged_at (отдельный
+    флаг: НЕ owner_notified_at Части Г и НЕ TaskInstance.sheet_logged_at
+    Части Б). Ничего не делает при status_history_log.enabled=False.
+
+    Ошибка Google Sheets API логируется, ни одна запись НЕ помечается —
+    весь пакет уйдёт повторно на следующем интервале (как delivery_log_job)."""
+    from bot.database.db import async_session_factory
+    from bot.database.repositories.task_repository import TaskRepository
+    from bot.database.repositories.user_repository import UserRepository
+    from bot.services.status_notification_service import resolve_log_actor
+
+    factory = session_factory or async_session_factory
+    async with factory() as session:
+        settings = SettingService(session)
+        if not bool(await settings.get("status_history_log.enabled")):
+            return
+        task_repo = TaskRepository(session)
+        users = UserRepository(session)
+        logs = await task_repo.get_unlogged_status_logs()
+        if not logs:
+            return
+        rows: list[list] = []
+        for log in logs:
+            inst = await task_repo.get_instance(log.task_instance_id)
+            title = inst.title_snapshot if inst else f"задача #{log.task_instance_id}"
+            rows.append([
+                title,
+                log.old_status or "—",       # NULL — первое создание записи
+                log.new_status or "—",
+                await resolve_log_actor(users, log),
+                (log.created_at.strftime(_DELIVERY_LOG_DT_FORMAT)
+                 if log.created_at else "—"),
+            ])
+        spreadsheet_id = (str(await settings.get("sync.spreadsheet_id"))
+                          or get_settings().google_sheets_spreadsheet_id)
+        try:
+            client = SheetsClient(
+                get_settings().google_sheets_credentials_file, spreadsheet_id)
+            client.append_rows(STATUS_HISTORY_SHEET_NAME, rows, STATUS_HISTORY_HEADER)
+        except Exception:  # noqa: BLE001 — недоступность Sheets не роняет планировщик
+            logger.exception(
+                "status_history_job: не удалось дописать %d строк(и) в лист %r — "
+                "строки будут повторно взяты на следующем интервале",
+                len(rows), STATUS_HISTORY_SHEET_NAME)
+            return
+        now = datetime.utcnow()
+        for log in logs:
+            log.sheet_logged_at = now
+        await session.commit()
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_sheets_service.py tests/test_status_notification_service.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/google_sheets_service.py tests/test_sheets_service.py
+git commit -m "feat: status_history_job exports full task status history to sheet"
+```
+
+---
+
+### Task 20: регистрация `status_history`-джоба и связка с настройками
+
+**Files:**
+- Modify: `bot/services/scheduler_service.py` (новый метод после `register_status_notification_job` из Task 15; функция `setup_scheduler`)
+- Modify: `bot/handlers/admin/settings.py` (`SCHEDULER_AFFECTING`; хвост ветки в `apply_setting_input`)
+- Test: `tests/test_scheduler_service.py`, `tests/test_admin_settings.py`
+
+**Interfaces:**
+- Consumes: `status_history_job(bot, session_factory)` (Task 19), настройки `status_history_log.*` (Task 18), паттерн `register_delivery_log_job`/`register_status_notification_job`.
+- Produces: `SchedulerService.register_status_history_job() -> None` (job id `"status_history"`, интервальный триггер, `args=[self.bot, self.session_factory]`, `misfire_grace_time=GRACE`); вызов при старте бота в `setup_scheduler`; правка `status_history_log.*` через общий редактор настроек пересобирает именно этот job.
+
+- [ ] **Step 1: Написать падающие тесты**
+
+1a. Добавить в конец `tests/test_scheduler_service.py`:
+
+```python
+async def test_register_status_history_job_enabled_interval_no_duplicates(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_history_log.enabled", True,
+                                    actor_user_id=None)
+        await SettingService(s).set("status_history_log.interval_minutes", 30,
+                                    actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    for _ in range(3):                                 # идемпотентно, без дублей
+        await svc.register_status_history_job()
+    jobs = [j for j in scheduler.get_jobs() if j.id == "status_history"]
+    assert len(jobs) == 1
+    assert jobs[0].trigger.interval.total_seconds() == 30 * 60
+
+
+async def test_register_status_history_job_disabled_removes_job(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_history_log.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_status_history_job()
+    assert scheduler.get_job("status_history") is not None
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_history_log.enabled", False,
+                                    actor_user_id=None)
+        await s.commit()
+    await svc.register_status_history_job()
+    assert scheduler.get_job("status_history") is None   # выключили — job снят
+
+
+async def test_setup_scheduler_registers_status_history_job(session_factory):
+    from bot.services.scheduler_service import setup_scheduler
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("status_history_log.enabled", True,
+                                    actor_user_id=None)
+        await s.commit()
+    scheduler = await setup_scheduler(AsyncMock(), session_factory)
+    assert scheduler.get_job("status_history") is not None
+```
+
+1b. Добавить в конец `tests/test_admin_settings.py`:
+
+```python
+async def test_status_history_settings_rebuild_status_history_job(session):
+    """Часть Д: правка status_history_log.* пересобирает ИМЕННО
+    status_history-job, а не соседние job'ы."""
+    cfg, valya = await make_config(session)
+    from bot.handlers.admin.settings import SCHEDULER_AFFECTING, apply_setting_input
+
+    assert "status_history_log.enabled" in SCHEDULER_AFFECTING
+    assert "status_history_log.interval_minutes" in SCHEDULER_AFFECTING
+
+    scheduler_svc = AsyncMock()
+    ok, _ = await apply_setting_input(session, valya,
+                                      "status_history_log.interval_minutes",
+                                      "30", scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_status_history_job.assert_awaited()
+    scheduler_svc.register_sync_job.assert_not_awaited()
+    scheduler_svc.register_delivery_log_job.assert_not_awaited()
+    scheduler_svc.register_status_notification_job.assert_not_awaited()
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `python -m pytest tests/test_scheduler_service.py tests/test_admin_settings.py -q`
+Expected: FAIL — `AttributeError: 'SchedulerService' object has no attribute 'register_status_history_job'` и `assert "status_history_log.enabled" in SCHEDULER_AFFECTING`.
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/services/scheduler_service.py` после метода `register_status_notification_job` (Task 15) добавить:
+
+```python
+    async def register_status_history_job(self) -> None:
+        """Часть Д: по образцу register_delivery_log_job — снимает job
+        "status_history" и, если status_history_log.enabled=True, регистрирует
+        status_history_job с интервалом status_history_log.interval_minutes.
+        Явный remove_job перед add_job — см. комментарий в register_report_job."""
+        from bot.services.google_sheets_service import status_history_job
+        from bot.services.setting_service import SettingService
+        async with self.session_factory() as session:
+            settings = SettingService(session)
+            enabled = bool(await settings.get("status_history_log.enabled"))
+            minutes = int(await settings.get("status_history_log.interval_minutes"))
+        if self.scheduler.get_job("status_history"):
+            self.scheduler.remove_job("status_history")
+        if enabled:
+            self.scheduler.add_job(status_history_job, "interval", minutes=minutes,
+                                   args=[self.bot, self.session_factory],
+                                   id="status_history", misfire_grace_time=GRACE)
+```
+
+3b. В `setup_scheduler` того же файла заменить (хвост после Task 15):
+
+```python
+    await svc.register_report_job()
+    await svc.register_sync_job()
+    await svc.register_delivery_log_job()
+    await svc.register_status_notification_job()
+    return scheduler
+```
+
+на:
+
+```python
+    await svc.register_report_job()
+    await svc.register_sync_job()
+    await svc.register_delivery_log_job()
+    await svc.register_status_notification_job()
+    await svc.register_status_history_job()
+    return scheduler
+```
+
+3c. В `bot/handlers/admin/settings.py` заменить (версия после Task 15):
+
+```python
+SCHEDULER_AFFECTING = {"reports.weekday", "reports.time",
+                       "sync.auto_enabled", "sync.interval_minutes",
+                       "delivery_log.enabled", "delivery_log.interval_minutes",
+                       "status_notifications.enabled",
+                       "status_notifications.interval_minutes"}
+```
+
+на:
+
+```python
+SCHEDULER_AFFECTING = {"reports.weekday", "reports.time",
+                       "sync.auto_enabled", "sync.interval_minutes",
+                       "delivery_log.enabled", "delivery_log.interval_minutes",
+                       "status_notifications.enabled",
+                       "status_notifications.interval_minutes",
+                       "status_history_log.enabled",
+                       "status_history_log.interval_minutes"}
+```
+
+3d. Там же, в `apply_setting_input`, заменить хвост ветки (версия после Task 15):
+
+```python
+        await session.commit()
+        if key.startswith("reports."):
+            await scheduler_svc.register_report_job()
+        elif key.startswith("delivery_log."):
+            await scheduler_svc.register_delivery_log_job()
+        elif key.startswith("status_notifications."):
+            await scheduler_svc.register_status_notification_job()
+        else:
+            await scheduler_svc.register_sync_job()
+```
+
+на:
+
+```python
+        await session.commit()
+        if key.startswith("reports."):
+            await scheduler_svc.register_report_job()
+        elif key.startswith("delivery_log."):
+            await scheduler_svc.register_delivery_log_job()
+        elif key.startswith("status_notifications."):
+            await scheduler_svc.register_status_notification_job()
+        elif key.startswith("status_history_log."):
+            await scheduler_svc.register_status_history_job()
+        else:
+            await scheduler_svc.register_sync_job()
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_scheduler_service.py tests/test_admin_settings.py tests/test_admin_sync.py -q`
+Expected: PASS.
+
+- [ ] **Step 5: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/scheduler_service.py bot/handlers/admin/settings.py tests/test_scheduler_service.py tests/test_admin_settings.py
+git commit -m "feat: register_status_history_job wired to startup and settings"
+```
+
+---
+
+## Часть Е — фикс жёстких 24 часов до overdue
+
+### Task 21: `register_instance_jobs` читает `reminders.overdue_after_hours`
+
+Баг: overdue-job всегда регистрировался на `scheduled_at + 24ч`, настройка `reminders.overdue_after_hours` (реестр: int, default 24, min 1, max 168) нигде не читалась — совпадение хардкода с default'ом настройки маскировало баг. Фикс: метод становится `async` и читает настройку через собственную сессию (тот же паттерн, что `register_report_job`/`rebuild_config_job`); все 3 вызывающих места получают `await`.
+
+**Note (вне рамок, по спеке):** `recover_jobs` (`bot/services/scheduler_recovery_service.py`, шаг «2) напоминания и overdue») содержит СВОЙ такой же хардкод `base + timedelta(hours=24)` — он НЕ трогается: весь `scheduler_recovery_service.py` явно выведен спекой за рамки этого дизайна. Известное следствие: после рестарта бота overdue-job открытых задач восстанавливается на +24ч независимо от настройки.
+
+**Files:**
+- Modify: `bot/services/scheduler_service.py` (метод `register_instance_jobs`, ~строки 126-144; вызов в `run_config`, ~строка 80)
+- Modify: `bot/handlers/admin/operations.py` (функция `reregister_reminders`, ~строка 157)
+- Modify: `bot/handlers/admin/task_configs.py` (функция `manual_run_config`, ~строка 153)
+- Test: `tests/test_scheduler_service.py`, `tests/test_admin_task_configs.py`
+
+**Interfaces:**
+- Consumes: существующая настройка `reminders.overdue_after_hours` (`SettingDef(..., int, 24, "reminders", min_=1, max_=168)` — уже в реестре, ничего добавлять не нужно), `SettingService.get`, `self.session_factory`.
+- Produces: `SchedulerService.register_instance_jobs(inst) -> None` становится **async** — каждый вызывающий код обязан `await`. Других вызывающих мест в проекте нет (`recover_jobs` регистрирует job'ы сам, минуя этот метод; проверить: `grep -rn "register_instance_jobs" bot tests` должен показать только 3 продовых вызова + тест).
+
+- [ ] **Step 1: Написать падающие тесты**
+
+Добавить в конец `tests/test_scheduler_service.py`:
+
+```python
+async def test_register_instance_jobs_overdue_uses_setting(session_factory):
+    """Часть Е (регрессия): overdue:{id} планируется через
+    reminders.overdue_after_hours (здесь 2), а не жёстко +24 часа."""
+    from datetime import timedelta
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=7, name="Валя",
+                                              role=Role.MANAGER_WB)
+        repo = TaskRepository(s)
+        cfg = await repo.upsert_config(dict(
+            external_task_id="overdue_from_setting", title="Проверка",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=user.id, is_active=True))
+        inst = await repo.create_instance_idempotent(
+            cfg, datetime(2026, 7, 10, 9, 0), None,
+            dict(title_snapshot="Проверка", scenario_snapshot="simple"))
+        await SettingService(s).set("reminders.overdue_after_hours", 2,
+                                    actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler(timezone="UTC")     # как в проде (setup_scheduler)
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_instance_jobs(inst)
+
+    job = scheduler.get_job(f"overdue:{inst.id}")
+    assert job is not None
+    assert job.trigger.run_date.replace(tzinfo=None) == \
+        datetime(2026, 7, 10, 9, 0) + timedelta(hours=2)     # НЕ +24
+
+
+async def test_register_instance_jobs_overdue_default_24(session_factory):
+    """Обратная совместимость: без явной настройки — прежние 24 часа
+    (default реестра reminders.overdue_after_hours)."""
+    from datetime import timedelta
+
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=8, name="Валя",
+                                              role=Role.MANAGER_WB)
+        repo = TaskRepository(s)
+        cfg = await repo.upsert_config(dict(
+            external_task_id="overdue_default", title="Проверка",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=user.id, is_active=True))
+        inst = await repo.create_instance_idempotent(
+            cfg, datetime(2026, 7, 10, 9, 0), None,
+            dict(title_snapshot="Проверка", scenario_snapshot="simple"))
+        await s.commit()
+
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_instance_jobs(inst)
+    job = scheduler.get_job(f"overdue:{inst.id}")
+    assert job.trigger.run_date.replace(tzinfo=None) == \
+        datetime(2026, 7, 10, 9, 0) + timedelta(hours=24)
+```
+
+- [ ] **Step 2: Убедиться, что тесты падают**
+
+Run: `python -m pytest tests/test_scheduler_service.py::test_register_instance_jobs_overdue_uses_setting tests/test_scheduler_service.py::test_register_instance_jobs_overdue_default_24 -q`
+Expected: FAIL — `TypeError: object NoneType can't be used in 'await' expression` (метод пока синхронный: job с хардкодом +24 уже зарегистрирован, но `await` его результата падает).
+
+- [ ] **Step 3: Реализация**
+
+3a. В `bot/services/scheduler_service.py` заменить метод `register_instance_jobs` целиком:
+
+```python
+    async def register_instance_jobs(self, inst) -> None:
+        """Регистрирует remind1/remind2/overdue job'ы инстанса.
+
+        Часть Е (bugfix): срок overdue-джоба раньше был жёстко закодирован
+        (+24 часа), настройка reminders.overdue_after_hours игнорировалась —
+        совпадение хардкода с её default'ом (24) маскировало баг. Теперь
+        настройка читается здесь; метод стал async и открывает СОБСТВЕННУЮ
+        сессию через session_factory (тот же паттерн, что register_report_job
+        и rebuild_config_job). Чтение дёшево: SettingService кэширует значения
+        на уровне модуля."""
+        from bot.services.reminder_service import reminder_job, overdue_job
+        from bot.services.setting_service import SettingService
+        async with self.session_factory() as session:
+            overdue_hours = int(await SettingService(session).get(
+                "reminders.overdue_after_hours"))
+        base = inst.scheduled_at
+        if inst.remind_after_hours_snapshot:
+            self.scheduler.add_job(
+                reminder_job, "date",
+                run_date=base + timedelta(hours=inst.remind_after_hours_snapshot),
+                args=[inst.id, 1, self.bot, self.session_factory, self.scheduler],
+                id=f"remind1:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
+        if inst.second_remind_after_hours_snapshot:
+            self.scheduler.add_job(
+                reminder_job, "date",
+                run_date=base + timedelta(hours=inst.second_remind_after_hours_snapshot),
+                args=[inst.id, 2, self.bot, self.session_factory, self.scheduler],
+                id=f"remind2:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
+        self.scheduler.add_job(
+            overdue_job, "date", run_date=base + timedelta(hours=overdue_hours),
+            args=[inst.id, self.bot, self.session_factory],
+            id=f"overdue:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
+```
+
+3b. Там же, в `run_config`, заменить строку:
+
+```python
+                self.register_instance_jobs(inst)
+```
+
+на:
+
+```python
+                await self.register_instance_jobs(inst)
+```
+
+3c. В `bot/handlers/admin/operations.py`, в `reregister_reminders`, заменить:
+
+```python
+    if scheduler_svc is not None:
+        scheduler_svc.register_instance_jobs(inst)
+```
+
+на:
+
+```python
+    if scheduler_svc is not None:
+        await scheduler_svc.register_instance_jobs(inst)
+```
+
+3d. В `bot/handlers/admin/task_configs.py`, в `manual_run_config`, заменить:
+
+```python
+        if scheduler_svc is not None:
+            scheduler_svc.register_instance_jobs(inst)
+```
+
+на:
+
+```python
+        if scheduler_svc is not None:
+            await scheduler_svc.register_instance_jobs(inst)
+```
+
+3e. В `tests/test_admin_task_configs.py`, в `test_manual_run_creates_instance_and_sends_message`, заменить:
+
+```python
+    scheduler_svc = AsyncMock()
+    scheduler_svc.scheduler = AsyncMock()
+    scheduler_svc.register_instance_jobs = MagicMock()   # реальный метод синхронный, не awaited
+```
+
+на:
+
+```python
+    scheduler_svc = AsyncMock()
+    scheduler_svc.scheduler = AsyncMock()
+    # register_instance_jobs теперь async (Часть Е) — AsyncMock сам создаёт
+    # awaitable-атрибут, отдельный MagicMock больше не нужен
+```
+
+и там же заменить:
+
+```python
+    scheduler_svc.register_instance_jobs.assert_called_once_with(inst)
+```
+
+на:
+
+```python
+    scheduler_svc.register_instance_jobs.assert_awaited_once_with(inst)
+```
+
+- [ ] **Step 4: Убедиться, что тесты проходят**
+
+Run: `python -m pytest tests/test_scheduler_service.py tests/test_admin_task_configs.py tests/test_admin_operations.py tests/test_scheduler_recovery.py -q`
+Expected: PASS (в т.ч. `test_reregister_reminders_only_from_open` — там `scheduler_svc=None`, ветка с `await` не выполняется; recovery-тесты не затронуты — `recover_jobs` регистрирует job'ы сам).
+
+- [ ] **Step 5: Полный юнит-прогон и коммит**
+
+Run: `python -m pytest -q` — Expected: PASS.
+
+```bash
+git add bot/services/scheduler_service.py bot/handlers/admin/operations.py bot/handlers/admin/task_configs.py tests/test_scheduler_service.py tests/test_admin_task_configs.py
+git commit -m "fix: overdue job delay uses reminders.overdue_after_hours setting instead of hardcoded 24h"
+```
+
+---
+
 ## Ручной шаг вне кода (НЕ задача плана — для него нет и не должно быть кода)
 
 После деплоя этих изменений администратор должен один раз вручную добавить в реальную Google-таблицу, в лист задач (настройка `sync.sheet_tasks`, по умолчанию `Tasks_Config`), **две новые колонки** с заголовками, ТОЧНО совпадающими со строками:
@@ -1598,10 +3297,10 @@ git commit -m "feat: due_days_offset editable in schedules admin section (0-30)"
 - `time` — время отправки задачи, формат `ЧЧ:ММ`, московское время (конвертацию в UTC делает бот);
 - `due_days_offset` — целое число дней (0-30): на сколько дней после дня отправки наступает дедлайн; пустая ячейка = 0 (дедлайн в день отправки, как раньше).
 
-gspread `get_all_records()` использует строку заголовков листа как ключи словаря — текст заголовка обязан совпадать посимвольно. Пока колонок нет: `due_days_offset` = 0 (поведение не меняется), а `time` станет `None`, и планировщик подставит дефолт 09:00 UTC — поэтому колонку `time` следует заполнить (например, прежними значениями из `due_time`) **сразу** при добавлении, до следующего синка. Лист «Журнал отправок» вручную создавать не нужно — `append_rows` создаст его сам с заголовком при первой выгрузке.
+gspread `get_all_records()` использует строку заголовков листа как ключи словаря — текст заголовка обязан совпадать посимвольно. Пока колонок нет: `due_days_offset` = 0 (поведение не меняется), а `time` станет `None`, и планировщик подставит дефолт 09:00 UTC — поэтому колонку `time` следует заполнить (например, прежними значениями из `due_time`) **сразу** при добавлении, до следующего синка. Листы «Журнал отправок» (Часть Б) и «История статусов» (Часть Д) вручную создавать не нужно — `append_rows` создаст их сам с заголовком при первой выгрузке.
 
 Также сервисному аккаунту Google нужны права **редактора** таблицы (scope стал read-write; если аккаунт добавлен как «читатель», запись в журнал будет падать и логироваться до выдачи прав — на отправку сообщений в Telegram это не влияет).
 
 ## Порядок применения миграций при деплое
 
-`alembic upgrade head` (накатит `0004`, затем `0005`). Обе миграции обратимы (`downgrade` удаляет колонку).
+`alembic upgrade head` (накатит по порядку `0004`, `0005`, `0006`, `0007`). Все четыре миграции обратимы (`downgrade` удаляет колонку).
