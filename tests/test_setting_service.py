@@ -109,11 +109,11 @@ _TYPE_MAP = {"int": int, "bool": bool, "str": str, "json": object}
 
 def test_registry_matches_seed_migration_exactly():
     """SETTINGS_REGISTRY — единственный источник истины для допустимых ключей.
-    Он должен ТОЧНО (94 ключа) совпадать по составу, дефолтам, типам и категориям
+    Он должен ТОЧНО (96 ключей) совпадать по составу, дефолтам, типам и категориям
     с тем, что вставляет seed-миграция 0002_seed_defaults.py."""
     seed = _load_seed_defaults()
-    assert len(seed) == 94
-    assert len(SETTINGS_REGISTRY) == 94
+    assert len(seed) == 96
+    assert len(SETTINGS_REGISTRY) == 96
 
     seed_keys = {key for key, _, _, _ in seed}
     assert set(SETTINGS_REGISTRY.keys()) == seed_keys
@@ -129,7 +129,7 @@ def test_registry_matches_seed_migration_exactly():
         counts_by_category[category] = counts_by_category.get(category, 0) + 1
     assert counts_by_category == {
         "general": 14, "article_check": 19, "approval": 10, "reminders": 14,
-        "questions": 8, "reports": 12, "sync": 8, "internal": 1,
+        "questions": 8, "reports": 14, "sync": 8, "internal": 1,
         "delivery_log": 2, "status_notifications": 4, "status_history_log": 2,
     }
 

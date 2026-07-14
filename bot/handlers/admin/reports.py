@@ -25,14 +25,13 @@ FSM-продолжение сообщением заново проверяет 
 settings.py — тот хендлер жёстко проверяет `settings.manage`, см. Task 31
 lesson).
 """
-import json
-
 from aiogram import Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.handlers.admin.settings import (
-    apply_setting_input, category_keys, key_by_index, render_setting_card,
+    apply_setting_input, category_keys, format_setting_value, key_by_index,
+    render_setting_card,
 )
 from bot.keyboards.admin.confirm import confirm_keyboard
 from bot.keyboards.admin.main import AdminCb, admin_menu_keyboard
@@ -43,7 +42,7 @@ from bot.keyboards.admin.reports import (
 from bot.services.admin_service import AdminService
 from bot.services.audit_service import AuditService
 from bot.services.report_service import ReportService, weekly_report_job
-from bot.services.setting_service import SettingService
+from bot.services.setting_service import SETTINGS_REGISTRY, SettingService
 from bot.services.user_service import UserService
 from bot.states.admin_states import AdminStates
 
@@ -107,8 +106,10 @@ async def _show_list(callback: CallbackQuery, session, page: int) -> None:
     entries: list[tuple[int, str]] = []
     for offset, key in enumerate(keys[start:start + page_size]):
         idx = start + offset
+        d = SETTINGS_REGISTRY[key]
         value = await settings_svc.get(key)
-        entries.append((idx, f"{key} = {json.dumps(value, ensure_ascii=False)}"[:60]))
+        value_display = await format_setting_value(session, d, value)
+        entries.append((idx, f"{d.description or key}: {value_display}"[:60]))
     await callback.message.edit_text(
         "📊 Отчёты", reply_markup=reports_list_keyboard(entries, page, total_pages))
     await callback.answer()
@@ -134,11 +135,14 @@ async def _start_edit(callback: CallbackQuery, session, state: FSMContext | None
     if state is None:
         await callback.answer("Недоступно", show_alert=True)
         return
+    d = SETTINGS_REGISTRY[key]
     current = await SettingService(session).get(key)
+    current_display = await format_setting_value(session, d, current)
     await state.set_state(AdminStates.waiting_rep_value)
     await state.update_data(setting_key=key, idx=idx)
     await callback.message.edit_text(
-        f"Текущее значение {key}: {current}\nВведите новое значение сообщением:",
+        f"{d.description or key}\nТекущее значение: {current_display}\n"
+        "Введите новое значение сообщением:",
         reply_markup=cancel_keyboard(idx))
     await callback.answer()
 

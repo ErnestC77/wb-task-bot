@@ -97,11 +97,13 @@ SETTINGS_DEFAULTS: list[tuple[str, object, str, str]] = [
     ("questions.allow_complete_with_open_questions", True, "bool", "questions"),
     ("questions.route_by_topic", {}, "json", "questions"),
     ("questions.route_by_category", {}, "json", "questions"),
-    # reports (12)
+    # reports (14)
     ("reports.weekday", 6, "int", "reports"),
     ("reports.time", "20:00", "str", "reports"),
     ("reports.period_days", 7, "int", "reports"),
     ("reports.topic_key", "reports", "str", "reports"),
+    ("reports.send_to_group", True, "bool", "reports"),
+    ("reports.owner_receiver_id", 0, "int", "reports"),
     ("reports.private_receiver_ids", [], "json", "reports"),
     ("reports.show_overdue", True, "bool", "reports"),
     ("reports.show_auto_approved", True, "bool", "reports"),

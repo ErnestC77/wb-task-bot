@@ -176,14 +176,26 @@ async def _send_weekly_report(bot: Bot, session: AsyncSession) -> None:
     settings = SettingService(session)
     text = await svc.build_weekly_report()
 
-    chat_id = int(await settings.get("general.group_chat_id"))
-    topic_key = str(await settings.get("reports.topic_key"))
-    topic = await TopicRepository(session).get_by_key(topic_key)
-    thread_id = topic.message_thread_id if topic else None
-    try:
-        await bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=text)
-    except Exception as exc:                     # noqa: BLE001 — не рушим job
-        logger.warning("Weekly report topic send failed: %s", exc)
+    if bool(await settings.get("reports.send_to_group")):
+        chat_id = int(await settings.get("general.group_chat_id"))
+        topic_key = str(await settings.get("reports.topic_key"))
+        topic = await TopicRepository(session).get_by_key(topic_key)
+        thread_id = topic.message_thread_id if topic else None
+        try:
+            await bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=text)
+        except Exception as exc:                 # noqa: BLE001 — не рушим job
+            logger.warning("Weekly report topic send failed: %s", exc)
+
+    owner_id = int(await settings.get("reports.owner_receiver_id"))
+    if owner_id:
+        from bot.database.repositories.user_repository import UserRepository
+        owner = await UserRepository(session).get_by_id(owner_id)
+        if owner is not None:
+            try:
+                await bot.send_message(chat_id=owner.telegram_id, text=text)
+            except Exception as exc:             # noqa: BLE001 — не рушим job
+                logger.warning("Weekly report owner send to %s failed: %s",
+                               owner.telegram_id, exc)
 
     for receiver_id in list(await settings.get("reports.private_receiver_ids")):
         try:

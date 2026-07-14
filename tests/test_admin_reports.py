@@ -365,3 +365,88 @@ def test_cancel_keyboard_roundtrip():
 
     cb = RepCb.unpack(cancel_keyboard(2).inline_keyboard[0][0].callback_data)
     assert cb.a == "card" and cb.id == 2
+
+
+# ---------------------------------------------------------------------------
+# Список настроек — человекочитаемые описания, а не «key = json»
+# ---------------------------------------------------------------------------
+
+async def test_reports_list_shows_description_not_raw_key(session):
+    from bot.handlers.admin.reports import handle_rep_callback
+    from bot.keyboards.admin.reports import RepCb
+
+    owner = await _owner(session)
+    await session.commit()
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    await handle_rep_callback(callback, RepCb(a="list"), session)
+    kb = _reply_markup(callback)
+    labels = [btn.text for row in kb.inline_keyboard for btn in row]
+    assert not any(label.startswith("reports.") for label in labels)
+    assert any("Формат отчёта" in label for label in labels)
+
+
+async def test_reports_edit_prompt_shows_description_not_raw_key(session):
+    from bot.handlers.admin.reports import handle_rep_callback
+    from bot.keyboards.admin.reports import RepCb
+
+    owner = await _owner(session)
+    await session.commit()
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id
+    state = FakeState()
+    # index 0 = reports.format
+    await handle_rep_callback(callback, RepCb(a="edit", id=0), session, state=state)
+    text = callback.message.edit_text.await_args.args[0]
+    assert "reports.format" not in text
+    assert "Формат отчёта" in text
+
+
+# ---------------------------------------------------------------------------
+# reports.send_to_group / reports.owner_receiver_id — не слать в группу,
+# слать лично конкретному владельцу
+# ---------------------------------------------------------------------------
+
+async def test_send_to_group_settings_registered():
+    from bot.services.setting_service import SETTINGS_REGISTRY
+    assert SETTINGS_REGISTRY["reports.send_to_group"].value_type is bool
+    assert SETTINGS_REGISTRY["reports.send_to_group"].default is True
+    assert SETTINGS_REGISTRY["reports.owner_receiver_id"].value_kind == "user_id"
+    assert SETTINGS_REGISTRY["reports.owner_receiver_id"].default == 0
+
+
+async def test_weekly_report_skips_group_when_disabled(session):
+    from datetime import datetime
+    from bot.services.report_service import weekly_report_job
+    from bot.services.setting_service import SettingService
+
+    owner = await UserRepository(session).upsert(
+        telegram_id=602346341, name="Александр", role=Role.OWNER)
+    await SettingService(session).set("reports.send_to_group", False, actor_user_id=None)
+    await SettingService(session).set(
+        "reports.owner_receiver_id", owner.id, actor_user_id=None)
+    await SettingService(session).set("general.group_chat_id", -100, actor_user_id=None)
+    await session.commit()
+
+    bot = AsyncMock()
+    await weekly_report_job(bot, None, session=session)
+
+    sent_chat_ids = [call.kwargs.get("chat_id", call.args[0] if call.args else None)
+                     for call in bot.send_message.await_args_list]
+    assert -100 not in sent_chat_ids                 # группа выключена
+    assert 602346341 in sent_chat_ids                # лично владельцу ушло
+
+
+async def test_weekly_report_sends_to_group_by_default(session):
+    from bot.services.report_service import weekly_report_job
+    from bot.services.setting_service import SettingService
+
+    await SettingService(session).set("general.group_chat_id", -100, actor_user_id=None)
+    await session.commit()
+
+    bot = AsyncMock()
+    await weekly_report_job(bot, None, session=session)
+
+    sent_chat_ids = [call.kwargs.get("chat_id", call.args[0] if call.args else None)
+                     for call in bot.send_message.await_args_list]
+    assert -100 in sent_chat_ids

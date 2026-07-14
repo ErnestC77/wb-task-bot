@@ -184,6 +184,11 @@ def _defs() -> list[SettingDef]:
                    "За сколько дней собирать данные в отчёт", min_=1, max_=31),
         SettingDef("reports.topic_key", str, "reports", "reports",
                    "Тема группы для отправки отчёта"),
+        SettingDef("reports.send_to_group", bool, True, "reports",
+                   "Отправлять отчёт в общую группу"),
+        SettingDef("reports.owner_receiver_id", int, 0, "reports",
+                   "Дополнительно отправлять отчёт лично этому владельцу "
+                   "(не задано — не отправлять)", value_kind="user_id"),
         # ВАЖНО: в отличие от прочих *_receiver_user_id (см. questions.* выше),
         # здесь хранятся СЫРЫЕ Telegram chat_id, а не users.id. Получатели —
         # внешние адресаты отчёта, необязательно зарегистрированные в боте
