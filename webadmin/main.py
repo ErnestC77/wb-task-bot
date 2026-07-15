@@ -2,7 +2,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from webadmin.auth import StaffLoginRequired, require_staff
+from webadmin.auth import ClientLoginRequired, StaffLoginRequired, require_client, require_staff
 from webadmin.config import get_webadmin_settings
 from webadmin.routers.auth import router as auth_router
 
@@ -24,6 +24,10 @@ def create_app() -> FastAPI:
     async def _staff_login_required(request: Request, exc: StaffLoginRequired):
         return RedirectResponse(url="/login", status_code=303)
 
+    @app.exception_handler(ClientLoginRequired)
+    async def _client_login_required(request: Request, exc: ClientLoginRequired):
+        return RedirectResponse(url="/client/login", status_code=303)
+
     @app.get("/healthz", response_class=PlainTextResponse)
     async def healthz() -> str:
         return "ok"
@@ -31,6 +35,10 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=PlainTextResponse, dependencies=[Depends(require_staff)])
     async def home() -> str:
         return "ok, staff"
+
+    @app.get("/client", response_class=PlainTextResponse, dependencies=[Depends(require_client)])
+    async def client_home() -> str:
+        return "ok, client"
 
     app.include_router(auth_router)
     return app

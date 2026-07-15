@@ -2,7 +2,9 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from webadmin.auth import STAFF_SESSION_KEY, check_staff_password
+from webadmin.auth import (
+    CLIENT_SESSION_KEY, STAFF_SESSION_KEY, check_client_password, check_staff_password,
+)
 from webadmin.csrf import get_or_create_csrf_token, verify_csrf_token
 
 router = APIRouter()
@@ -45,3 +47,25 @@ async def logout(request: Request, csrf_token: str = Form(None)):
         return PlainTextResponse("CSRF-токен недействителен", status_code=400)
     request.session.pop(STAFF_SESSION_KEY, None)
     return RedirectResponse(url="/login", status_code=303)
+
+
+@router.get("/client/login", response_class=HTMLResponse)
+async def client_login_form(request: Request):
+    token = get_or_create_csrf_token(request)
+    return templates.TemplateResponse(
+        "client_login.html", {"request": request, "error": None, "csrf_token": token})
+
+
+@router.post("/client/login", response_class=HTMLResponse)
+async def client_login_submit(request: Request, password: str = Form(...),
+                              csrf_token: str = Form(...)):
+    if not verify_csrf_token(request, csrf_token):
+        return templates.TemplateResponse(
+            "client_login.html", {"request": request, "error": "Сессия истекла, попробуйте войти ещё раз",
+                                  "csrf_token": get_or_create_csrf_token(request)}, status_code=400)
+    if not check_client_password(password):
+        return templates.TemplateResponse(
+            "client_login.html", {"request": request, "error": "Неверный пароль",
+                                  "csrf_token": get_or_create_csrf_token(request)}, status_code=401)
+    request.session[CLIENT_SESSION_KEY] = True
+    return RedirectResponse(url="/client", status_code=303)

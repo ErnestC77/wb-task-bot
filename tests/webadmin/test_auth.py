@@ -63,3 +63,48 @@ async def test_logout_revokes_access(client):
     await client.post("/logout", data={"csrf_token": logout_csrf_token})
     resp = await client.get("/")
     assert resp.status_code == 303
+
+
+async def test_client_home_redirects_to_client_login(client):
+    resp = await client.get("/client")
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/client/login"
+
+
+async def test_client_login_wrong_password(client):
+    form = await client.get("/client/login")
+    token = _extract_csrf_token(form.text)
+    resp = await client.post("/client/login", data={"password": "wrong", "csrf_token": token})
+    assert resp.status_code == 401
+
+
+async def test_client_login_without_csrf_token_rejected(client):
+    resp = await client.post("/client/login", data={"password": "test-client-pw"})
+    assert resp.status_code == 422
+
+
+async def test_client_login_with_wrong_csrf_token_rejected(client):
+    await client.get("/client/login")  # seeds a session + real token
+    resp = await client.post("/client/login", data={
+        "password": "test-client-pw", "csrf_token": "forged"})
+    assert resp.status_code == 400
+    assert "Сессия истекла" in resp.text
+
+
+async def test_client_login_correct_password_grants_access(client):
+    form = await client.get("/client/login")
+    token = _extract_csrf_token(form.text)
+    resp = await client.post("/client/login", data={"password": "test-client-pw", "csrf_token": token})
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/client"
+    home = await client.get("/client")
+    assert home.status_code == 200
+
+
+async def test_client_session_does_not_grant_staff_access(client):
+    form = await client.get("/client/login")
+    token = _extract_csrf_token(form.text)
+    await client.post("/client/login", data={"password": "test-client-pw", "csrf_token": token})
+    resp = await client.get("/")
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/login"
