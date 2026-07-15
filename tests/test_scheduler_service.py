@@ -343,9 +343,8 @@ async def test_setup_scheduler_registers_status_history_job(session_factory):
     assert scheduler.get_job("status_history") is not None
 
 
-async def test_register_instance_jobs_overdue_uses_setting(session_factory):
-    """Часть Е (регрессия): overdue:{id} планируется через
-    reminders.overdue_after_hours (здесь 2), а не жёстко +24 часа."""
+async def test_register_instance_jobs_not_taken_uses_setting(session_factory):
+    """not_taken:{id} планируется через reminders.not_taken_after_hours (здесь 2)."""
     from datetime import timedelta
     from bot.services.setting_service import SettingService
 
@@ -354,13 +353,13 @@ async def test_register_instance_jobs_overdue_uses_setting(session_factory):
                                               role=Role.MANAGER_WB)
         repo = TaskRepository(s)
         cfg = await repo.upsert_config(dict(
-            external_task_id="overdue_from_setting", title="Проверка",
+            external_task_id="not_taken_from_setting", title="Проверка",
             scenario="simple", schedule_type="daily",
             responsible_user_id=user.id, is_active=True))
         inst = await repo.create_instance_idempotent(
             cfg, datetime(2026, 7, 10, 9, 0), None,
             dict(title_snapshot="Проверка", scenario_snapshot="simple"))
-        await SettingService(s).set("reminders.overdue_after_hours", 2,
+        await SettingService(s).set("reminders.not_taken_after_hours", 2,
                                     actor_user_id=None)
         await s.commit()
 
@@ -368,15 +367,17 @@ async def test_register_instance_jobs_overdue_uses_setting(session_factory):
     svc = SchedulerService(scheduler, AsyncMock(), session_factory)
     await svc.register_instance_jobs(inst)
 
-    job = scheduler.get_job(f"overdue:{inst.id}")
+    job = scheduler.get_job(f"not_taken:{inst.id}")
     assert job is not None
     assert job.trigger.run_date.replace(tzinfo=None) == \
-        datetime(2026, 7, 10, 9, 0) + timedelta(hours=2)     # НЕ +24
+        datetime(2026, 7, 10, 9, 0) + timedelta(hours=2)     # НЕ дефолтные 12
+    assert scheduler.get_job(f"remind1:{inst.id}") is None
+    assert scheduler.get_job(f"remind2:{inst.id}") is None
+    assert scheduler.get_job(f"overdue:{inst.id}") is None
 
 
-async def test_register_instance_jobs_overdue_default_24(session_factory):
-    """Обратная совместимость: без явной настройки — прежние 24 часа
-    (default реестра reminders.overdue_after_hours)."""
+async def test_register_instance_jobs_not_taken_default_12(session_factory):
+    """Без явной настройки — дефолт 12 часов (реестр reminders.not_taken_after_hours)."""
     from datetime import timedelta
 
     async with session_factory() as s:
@@ -384,7 +385,7 @@ async def test_register_instance_jobs_overdue_default_24(session_factory):
                                               role=Role.MANAGER_WB)
         repo = TaskRepository(s)
         cfg = await repo.upsert_config(dict(
-            external_task_id="overdue_default", title="Проверка",
+            external_task_id="not_taken_default", title="Проверка",
             scenario="simple", schedule_type="daily",
             responsible_user_id=user.id, is_active=True))
         inst = await repo.create_instance_idempotent(
@@ -395,6 +396,6 @@ async def test_register_instance_jobs_overdue_default_24(session_factory):
     scheduler = AsyncIOScheduler(timezone="UTC")
     svc = SchedulerService(scheduler, AsyncMock(), session_factory)
     await svc.register_instance_jobs(inst)
-    job = scheduler.get_job(f"overdue:{inst.id}")
+    job = scheduler.get_job(f"not_taken:{inst.id}")
     assert job.trigger.run_date.replace(tzinfo=None) == \
-        datetime(2026, 7, 10, 9, 0) + timedelta(hours=24)
+        datetime(2026, 7, 10, 9, 0) + timedelta(hours=12)

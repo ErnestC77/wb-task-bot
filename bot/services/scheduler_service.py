@@ -138,12 +138,7 @@ class SchedulerService:
             self.register_config_job(config)
 
     async def register_instance_jobs(self, inst, session=None) -> None:
-        """Регистрирует remind1/remind2/overdue job'ы инстанса.
-
-        Часть Е (bugfix): срок overdue-джоба раньше был жёстко закодирован
-        (+24 часа), настройка reminders.overdue_after_hours игнорировалась —
-        совпадение хардкода с её default'ом (24) маскировало баг. Теперь
-        настройка читается здесь.
+        """Регистрирует not_taken job инстанса (единственное напоминание "не взято в работу").
 
         `session`: если вызывающий код уже находится внутри открытой
         транзакции (run_config, manual_run_config, reregister_reminders — все
@@ -156,32 +151,21 @@ class SchedulerService:
         транзакции (например, в тестах, вызывающих этот метод напрямую)
         session не передаётся — тогда открывается собственная (тот же
         паттерн, что register_report_job/rebuild_config_job)."""
-        from bot.services.reminder_service import reminder_job, overdue_job
+        from bot.services.reminder_service import not_taken_reminder_job
         from bot.services.setting_service import SettingService
         if session is not None:
-            overdue_hours = int(await SettingService(session).get(
-                "reminders.overdue_after_hours"))
+            not_taken_hours = int(await SettingService(session).get(
+                "reminders.not_taken_after_hours"))
         else:
             async with self.session_factory() as own_session:
-                overdue_hours = int(await SettingService(own_session).get(
-                    "reminders.overdue_after_hours"))
+                not_taken_hours = int(await SettingService(own_session).get(
+                    "reminders.not_taken_after_hours"))
         base = inst.scheduled_at
-        if inst.remind_after_hours_snapshot:
-            self.scheduler.add_job(
-                reminder_job, "date",
-                run_date=base + timedelta(hours=inst.remind_after_hours_snapshot),
-                args=[inst.id, 1, self.bot, self.session_factory, self.scheduler],
-                id=f"remind1:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
-        if inst.second_remind_after_hours_snapshot:
-            self.scheduler.add_job(
-                reminder_job, "date",
-                run_date=base + timedelta(hours=inst.second_remind_after_hours_snapshot),
-                args=[inst.id, 2, self.bot, self.session_factory, self.scheduler],
-                id=f"remind2:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
         self.scheduler.add_job(
-            overdue_job, "date", run_date=base + timedelta(hours=overdue_hours),
+            not_taken_reminder_job, "date",
+            run_date=base + timedelta(hours=not_taken_hours),
             args=[inst.id, self.bot, self.session_factory],
-            id=f"overdue:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
+            id=f"not_taken:{inst.id}", replace_existing=True, misfire_grace_time=GRACE)
 
     async def register_report_job(self) -> None:
         from bot.services.report_service import weekly_report_job
