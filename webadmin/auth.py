@@ -3,6 +3,7 @@ import hmac
 from fastapi import Request
 
 from webadmin.config import get_webadmin_settings
+from webadmin.csrf import get_or_create_csrf_token
 
 STAFF_SESSION_KEY = "staff_authenticated"
 
@@ -22,6 +23,7 @@ def is_staff(request: Request) -> bool:
 async def require_staff(request: Request) -> None:
     if not is_staff(request):
         raise StaffLoginRequired()
+    request.state.csrf_token = get_or_create_csrf_token(request)
 
 
 CLIENT_SESSION_KEY = "client_authenticated"

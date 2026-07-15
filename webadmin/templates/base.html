@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}WB Task Bot{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-900">
+    <nav class="bg-slate-800 text-white px-6 py-3 flex gap-4 items-center flex-wrap">
+        <a href="/schedule" class="font-semibold">📅 Расписание</a>
+        <a href="/delivery-log" class="hover:underline">Журнал отправок</a>
+        <a href="/status-history" class="hover:underline">История статусов</a>
+        <a href="/tasks" class="hover:underline">Задачи</a>
+        <a href="/users" class="hover:underline">Пользователи</a>
+        <a href="/topics" class="hover:underline">Темы</a>
+        <a href="/articles" class="hover:underline">Артикулы</a>
+        <form action="/logout" method="post" class="ml-auto">
+            <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+            <button type="submit" class="hover:underline">Выйти</button>
+        </form>
+    </nav>
+    <main class="p-6">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>
