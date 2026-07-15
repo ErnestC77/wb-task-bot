@@ -6,7 +6,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.database.models import DeliveryStatus, TaskConfig, TaskInstance, Topic
+from bot.database.models import DeliveryStatus, TaskConfig, TaskInstance, TaskLog, Topic, User
 from webadmin.auth import require_client, require_staff
 from webadmin.deps import get_db
 from webadmin.schedule_projection import (
@@ -65,4 +65,21 @@ async def delivery_log_page(request: Request, session: AsyncSession = Depends(ge
     rows = [{"instance": inst, "topic_name": topic_name}
            for inst, topic_name in (await session.execute(stmt)).all()]
     return templates.TemplateResponse("delivery_log.html", {
+        "request": request, "rows": rows, "start": range_start, "end": range_end})
+
+
+@router.get("/status-history", response_class=HTMLResponse, dependencies=[Depends(require_staff)])
+async def status_history_page(request: Request, session: AsyncSession = Depends(get_db),
+                               start: str | None = Query(None), end: str | None = Query(None)):
+    range_start = date.fromisoformat(start) if start else date.today().replace(day=1)
+    range_end = date.fromisoformat(end) if end else date.today()
+    stmt = (select(TaskLog, TaskInstance.title_snapshot, User.name)
+            .join(TaskInstance, TaskLog.task_instance_id == TaskInstance.id)
+            .outerjoin(User, TaskLog.user_id == User.id)
+            .where(TaskLog.created_at >= datetime.combine(range_start, time.min),
+                   TaskLog.created_at <= datetime.combine(range_end, time.max))
+            .order_by(TaskLog.created_at.desc()))
+    rows = [{"log": log, "title": title, "who": name or log.action}
+           for log, title, name in (await session.execute(stmt)).all()]
+    return templates.TemplateResponse("status_history.html", {
         "request": request, "rows": rows, "start": range_start, "end": range_end})

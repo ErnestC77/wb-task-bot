@@ -89,3 +89,31 @@ async def test_delivery_log_shows_only_sent_instances_in_range(client, session_f
     resp = await client.get("/delivery-log?start=2026-07-01&end=2026-07-31")
     assert resp.status_code == 200
     assert resp.text.count("Task 1") == 1  # только sent-инстанс попал в журнал
+
+
+async def test_status_history_shows_transitions_with_actor_name(client, session_factory):
+    from bot.database.models import TaskConfig, TaskInstance, TaskLog, User
+
+    async with session_factory() as session:
+        cfg = TaskConfig(external_task_id="t2", title="Task 2", schedule_type="daily",
+                         time=time(9, 0), is_active=True)
+        user = User(telegram_id=555, name="Валя", role="manager_wb")
+        session.add_all([cfg, user])
+        await session.flush()
+        inst = TaskInstance(
+            config_id=cfg.id, status="in_progress", scheduled_at=datetime(2026, 7, 10, 9, 0),
+            scheduled_date=date(2026, 7, 10), schedule_key="k3", title_snapshot="Task 2")
+        session.add(inst)
+        await session.flush()
+        session.add(TaskLog(task_instance_id=inst.id, user_id=user.id, action="btn:start",
+                            old_status="created", new_status="in_progress",
+                            created_at=datetime(2026, 7, 10, 9, 5)))
+        session.add(TaskLog(task_instance_id=inst.id, user_id=None, action="auto:overdue",
+                            old_status="in_progress", new_status="overdue",
+                            created_at=datetime(2026, 7, 11, 9, 0)))
+        await session.commit()
+    await login_staff(client)
+    resp = await client.get("/status-history?start=2026-07-01&end=2026-07-31")
+    assert resp.status_code == 200
+    assert "Валя" in resp.text        # известный пользователь — по имени
+    assert "auto:overdue" in resp.text  # user_id is None — по action

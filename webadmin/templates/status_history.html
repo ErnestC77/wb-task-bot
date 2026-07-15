@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}История статусов{% endblock %}
+{% block content %}
+<form method="get" class="mb-4 flex items-center gap-3">
+    <label>С <input type="date" name="start" value="{{ start.isoformat() }}" class="border rounded px-2 py-1"></label>
+    <label>По <input type="date" name="end" value="{{ end.isoformat() }}" class="border rounded px-2 py-1"></label>
+    <button type="submit" class="bg-slate-800 text-white px-3 py-1 rounded">Показать</button>
+</form>
+<table class="min-w-full bg-white border border-gray-200 text-sm">
+    <thead>
+        <tr>
+            <th class="border px-3 py-2 text-left">Задача</th>
+            <th class="border px-3 py-2 text-left">Был статус</th>
+            <th class="border px-3 py-2 text-left">Стал статус</th>
+            <th class="border px-3 py-2 text-left">Кто</th>
+            <th class="border px-3 py-2 text-left">Когда</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td class="border px-3 py-2">{{ row.title }}</td>
+            <td class="border px-3 py-2">{{ row.log.old_status or "—" }}</td>
+            <td class="border px-3 py-2">{{ row.log.new_status or "—" }}</td>
+            <td class="border px-3 py-2">{{ row.who }}</td>
+            <td class="border px-3 py-2">{{ row.log.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
