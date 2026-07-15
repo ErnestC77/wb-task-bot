@@ -13,7 +13,10 @@ async def test_create_daily_task_then_appears_in_list(client):
     assert "Новая задача" in listing.text
 
 
-async def test_create_task_sets_next_run_at_for_today_when_active(client, session_factory):
+async def test_create_task_sets_pending_rebuild_when_active(client, session_factory):
+    """Веб-форма больше не считает next_run_at сама — только выставляет
+    pending_rebuild, единственный пересчёт делает bot's rebuild_config_job
+    (см. docs/superpowers/plans/2026-07-15-webadmin-live-schedule-pickup.md)."""
     token = await login_staff(client)
     resp = await client.post("/tasks/new", data={
         "title": "Активная задача", "scenario": "simple", "responsible_user_id": "",
@@ -25,7 +28,7 @@ async def test_create_task_sets_next_run_at_for_today_when_active(client, sessio
     from bot.database.models import TaskConfig
     async with session_factory() as session:
         cfg = await session.scalar(select(TaskConfig).where(TaskConfig.title == "Активная задача"))
-        assert cfg.next_run_at is not None
+        assert cfg.pending_rebuild is True
 
 
 async def test_create_every_n_days_requires_interval(client):

@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -11,7 +9,6 @@ from bot.database.repositories.task_repository import TaskRepository
 from bot.database.repositories.topic_repository import TopicRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.handlers.admin.task_configs import _slugify_external_id
-from bot.services.scheduler_service import compute_next_run
 from bot.utils.validation import validate_int, validate_time_str
 from webadmin.auth import require_staff
 from webadmin.csrf import verify_csrf_form
@@ -106,8 +103,7 @@ async def task_create(request: Request, session: AsyncSession = Depends(get_db),
     except ValueError as exc:
         return await _render_form(request, session, None, str(exc), status_code=400)
     cfg = await TaskRepository(session).upsert_config(payload)
-    if cfg.is_active:
-        cfg.next_run_at = compute_next_run(cfg, datetime.utcnow(), after_change=True)
+    cfg.pending_rebuild = True
     await session.commit()
     return RedirectResponse(url="/tasks", status_code=303)
 
@@ -142,7 +138,6 @@ async def task_update(config_id: int, request: Request, session: AsyncSession = 
     except ValueError as exc:
         return await _render_form(request, session, task, str(exc), status_code=400)
     cfg = await repo.upsert_config(payload)
-    cfg.next_run_at = (compute_next_run(cfg, datetime.utcnow(), after_change=True)
-                      if cfg.is_active else None)
+    cfg.pending_rebuild = True
     await session.commit()
     return RedirectResponse(url="/tasks", status_code=303)
