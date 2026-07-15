@@ -19,6 +19,7 @@ from bot.database.repositories.user_repository import UserRepository
 from bot.services.setting_service import SettingService
 from bot.utils.html_utils import html_escape
 from bot.utils.logger import get_logger
+from bot.utils.message_templates import STATUS_LABELS
 
 logger = get_logger(__name__)
 
@@ -62,8 +63,10 @@ async def status_notification_job(bot, session_factory) -> None:
             inst = await task_repo.get_instance(log.task_instance_id)
             title = inst.title_snapshot if inst else f"задача #{log.task_instance_id}"
             who = await resolve_log_actor(users, log)
-            text = (f"📌 {html_escape(title)}: {log.old_status or '—'} → "
-                    f"{log.new_status} — {html_escape(who)}")
+            old_label = STATUS_LABELS.get(log.old_status, log.old_status) if log.old_status else "—"
+            new_label = STATUS_LABELS.get(log.new_status, log.new_status)
+            text = (f"📌 {html_escape(title)}: {old_label} → "
+                    f"{new_label} — {html_escape(who)}")
             for u in recipients:
                 try:
                     await bot.send_message(chat_id=u.telegram_id, text=text)

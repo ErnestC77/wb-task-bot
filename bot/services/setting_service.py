@@ -127,6 +127,9 @@ def _defs() -> list[SettingDef]:
                    min_=1, max_=48),
         SettingDef("reminders.second_after_hours", int, 6, "reminders",
                    "Через сколько часов отправлять второе напоминание", min_=1, max_=96),
+        SettingDef("reminders.not_taken_after_hours", int, 12, "reminders",
+                   "Через сколько часов слать единственное напоминание, если задачу "
+                   "так и не взяли в работу", min_=1, max_=72),
         SettingDef("reminders.extra_enabled", bool, False, "reminders",
                    "Включены ли повторяющиеся напоминания сверх первых двух"),
         SettingDef("reminders.repeat_interval_hours", int, 4, "reminders",

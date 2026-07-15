@@ -82,10 +82,10 @@ async def test_notifies_owner_once_with_default_statuses(session_factory):
     calls = bot.send_message.await_args_list
     assert {c.kwargs["chat_id"] for c in calls} == {99}   # только owner
     texts = [c.kwargs["text"] for c in calls]
-    assert any("Проверка" in t and "created → in_progress" in t and "Валя" in t
+    assert any("Проверка" in t and "🆕 Создана → 🔄 В работе" in t and "Валя" in t
                for t in texts)
-    assert any("in_progress → overdue" in t and "auto:overdue" in t for t in texts)
-    assert any("in_progress → completed" in t for t in texts)
+    assert any("🔄 В работе → 🔥 Просрочена" in t and "auto:overdue" in t for t in texts)
+    assert any("🔄 В работе → ✅ Выполнена" in t for t in texts)
     async with session_factory() as s:
         for key in ("notify", "auto", "done"):
             assert (await s.get(TaskLog, ids[key])).owner_notified_at is not None
@@ -103,7 +103,7 @@ async def test_statuses_setting_is_dynamic_filter(session_factory):
     await status_notification_job(bot, session_factory)
 
     assert bot.send_message.await_count == 1              # только done
-    assert "in_progress → completed" in bot.send_message.await_args.kwargs["text"]
+    assert "🔄 В работе → ✅ Выполнена" in bot.send_message.await_args.kwargs["text"]
     async with session_factory() as s:
         assert (await s.get(TaskLog, ids["done"])).owner_notified_at is not None
         assert (await s.get(TaskLog, ids["notify"])).owner_notified_at is None
@@ -113,7 +113,7 @@ async def test_statuses_setting_is_dynamic_filter(session_factory):
     await status_notification_job(bot, session_factory)
 
     assert bot.send_message.await_count == 2              # +1: только other
-    assert "waiting_approval" in bot.send_message.await_args.kwargs["text"]
+    assert "⏳ Ждет подтверждения" in bot.send_message.await_args.kwargs["text"]
     async with session_factory() as s:
         assert (await s.get(TaskLog, ids["other"])).owner_notified_at is not None
         assert (await s.get(TaskLog, ids["notify"])).owner_notified_at is None
