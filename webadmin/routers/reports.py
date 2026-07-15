@@ -7,13 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.models import TaskConfig
-from webadmin.auth import require_staff
+from webadmin.auth import require_client, require_staff
 from webadmin.deps import get_db
 from webadmin.schedule_projection import (
     month_range, project_occurrences, shift_period, week_range,
 )
 
-router = APIRouter(dependencies=[Depends(require_staff)])
+router = APIRouter()
 templates = Jinja2Templates(directory="webadmin/templates")
 
 
@@ -34,9 +34,18 @@ async def _schedule_context(session: AsyncSession, period: str, anchor: str | No
     return {"period": period, "start": start, "end": end, "days": days, "rows": rows}
 
 
-@router.get("/schedule", response_class=HTMLResponse)
+@router.get("/schedule", response_class=HTMLResponse, dependencies=[Depends(require_staff)])
 async def schedule_page(request: Request, session: AsyncSession = Depends(get_db),
                         period: str = Query("week"), anchor: str | None = Query(None),
                         direction: int = Query(0)):
     ctx = await _schedule_context(session, period, anchor, direction)
     return templates.TemplateResponse("schedule.html", {"request": request, **ctx})
+
+
+@router.get("/client/schedule", response_class=HTMLResponse,
+           dependencies=[Depends(require_client)])
+async def client_schedule_page(request: Request, session: AsyncSession = Depends(get_db),
+                               period: str = Query("week"), anchor: str | None = Query(None),
+                               direction: int = Query(0)):
+    ctx = await _schedule_context(session, period, anchor, direction)
+    return templates.TemplateResponse("client_schedule.html", {"request": request, **ctx})

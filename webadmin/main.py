@@ -37,9 +37,9 @@ def create_app() -> FastAPI:
     async def home() -> str:
         return "ok, staff"
 
-    @app.get("/client", response_class=PlainTextResponse, dependencies=[Depends(require_client)])
-    async def client_home() -> str:
-        return "ok, client"
+    @app.get("/client", dependencies=[Depends(require_client)])
+    async def client_home() -> RedirectResponse:
+        return RedirectResponse(url="/client/schedule")
 
     app.include_router(auth_router)
     app.include_router(reports_router)

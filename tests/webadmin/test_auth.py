@@ -98,7 +98,8 @@ async def test_client_login_correct_password_grants_access(client):
     assert resp.status_code == 303
     assert resp.headers["location"] == "/client"
     home = await client.get("/client")
-    assert home.status_code == 200
+    assert home.status_code == 307  # RedirectResponse default for GET
+    assert home.headers["location"] == "/client/schedule"
 
 
 async def test_client_session_does_not_grant_staff_access(client):

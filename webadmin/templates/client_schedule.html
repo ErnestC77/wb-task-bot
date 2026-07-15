@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Расписание задач</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 text-gray-900 p-6">
+    <h1 class="text-2xl font-bold mb-4">📅 Расписание задач</h1>
+    <div class="mb-4 flex items-center gap-3">
+        <a href="/client/schedule?period=week" class="px-3 py-1 rounded {{ 'bg-slate-800 text-white' if period == 'week' else 'bg-gray-200' }}">Неделя</a>
+        <a href="/client/schedule?period=month" class="px-3 py-1 rounded {{ 'bg-slate-800 text-white' if period == 'month' else 'bg-gray-200' }}">Месяц</a>
+        <a href="/client/schedule?period={{ period }}&anchor={{ start.isoformat() }}&direction=-1" class="px-3 py-1 rounded bg-gray-200">◀</a>
+        <span class="font-semibold">{{ start.strftime('%d.%m.%Y') }} — {{ end.strftime('%d.%m.%Y') }}</span>
+        <a href="/client/schedule?period={{ period }}&anchor={{ start.isoformat() }}&direction=1" class="px-3 py-1 rounded bg-gray-200">▶</a>
+    </div>
+    <div class="overflow-x-auto">
+    <table class="min-w-full bg-white border border-gray-200 text-sm">
+        <thead>
+            <tr>
+                <th class="border px-3 py-2 text-left">Задача</th>
+                {% for d in days %}
+                <th class="border px-2 py-2">{{ d.strftime('%d.%m') }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td class="border px-3 py-2">{{ row.config.title }}</td>
+                {% for d in days %}
+                <td class="border px-2 py-2 text-center">
+                    {% if d in row.by_date %}{{ row.by_date[d].strftime('%H:%M') }}{% endif %}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</body>
+</html>
