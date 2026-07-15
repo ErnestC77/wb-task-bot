@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Артикулы{% endblock %}
+{% block content %}
+<div class="mb-4"><a href="/articles/new" class="bg-slate-800 text-white px-3 py-2 rounded">+ Новый артикул</a></div>
+<table class="min-w-full bg-white border border-gray-200 text-sm">
+    <thead><tr>
+        <th class="border px-3 py-2">Артикул</th>
+        <th class="border px-3 py-2">Название товара</th>
+        <th class="border px-3 py-2">Порядок</th>
+        <th class="border px-3 py-2">Активен</th>
+        <th class="border px-3 py-2"></th>
+    </tr></thead>
+    <tbody>
+        {% for a in articles %}
+        <tr>
+            <td class="border px-3 py-2">{{ a.article }}</td>
+            <td class="border px-3 py-2">{{ a.product_name or "—" }}</td>
+            <td class="border px-3 py-2">{{ a.sort_order }}</td>
+            <td class="border px-3 py-2">{{ "Да" if a.is_active else "Нет" }}</td>
+            <td class="border px-3 py-2"><a href="/articles/{{ a.id }}/edit" class="text-blue-600 hover:underline">Редактировать</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

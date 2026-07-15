@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ "Редактировать" if article else "Новый" }} артикул{% endblock %}
+{% block content %}
+<form method="post" class="bg-white p-6 rounded shadow-md max-w-md space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+    {% if error %}<p class="text-red-600 text-sm">{{ error }}</p>{% endif %}
+    {% if not article %}
+    <div>
+        <label class="block text-sm font-medium">Артикул</label>
+        <input type="text" name="article" required class="w-full border rounded px-3 py-2">
+    </div>
+    {% endif %}
+    <div>
+        <label class="block text-sm font-medium">Название товара</label>
+        <input type="text" name="product_name" value="{{ article.product_name if article and article.product_name else '' }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Порядок сортировки</label>
+        <input type="text" name="sort_order" value="{{ article.sort_order if article else 0 }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <label class="flex items-center gap-2">
+        <input type="checkbox" name="is_active" {{ "checked" if not article or article.is_active else "" }}>
+        Активен
+    </label>
+    <button type="submit" class="bg-slate-800 text-white px-4 py-2 rounded">Сохранить</button>
+</form>
+{% endblock %}

@@ -27,6 +27,9 @@ class ArticleRepository:
         return await self.session.scalar(
             select(Article).where(Article.article == article))
 
+    async def get_by_id(self, article_id: int) -> Article | None:
+        return await self.session.get(Article, article_id)
+
     async def get_active_not_in(self, articles: set[str]) -> list[Article]:
         """Активные записи, отсутствующие среди articles (Task 22: чтобы
         деактивировать записи, не встретившиеся в свежей выгрузке Sheets)."""

@@ -5,6 +5,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from webadmin.auth import ClientLoginRequired, StaffLoginRequired, require_client, require_staff
 from webadmin.config import get_webadmin_settings
 from webadmin.routers.auth import router as auth_router
+from webadmin.routers.articles import router as articles_router
 from webadmin.routers.reports import router as reports_router
 from webadmin.routers.topics import router as topics_router
 from webadmin.routers.users import router as users_router
@@ -47,6 +48,7 @@ def create_app() -> FastAPI:
     app.include_router(reports_router)
     app.include_router(users_router)
     app.include_router(topics_router)
+    app.include_router(articles_router)
     return app
 
 
