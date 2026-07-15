@@ -9,6 +9,7 @@
     <form method="post" action="/login" class="bg-white p-8 rounded-lg shadow-md w-80 space-y-4">
         <h1 class="text-xl font-semibold">Вход в веб-админку</h1>
         {% if error %}<p class="text-red-600 text-sm">{{ error }}</p>{% endif %}
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="password" name="password" placeholder="Пароль" required
                class="w-full border rounded px-3 py-2">
         <button type="submit" class="w-full bg-slate-800 text-white rounded px-3 py-2">Войти</button>

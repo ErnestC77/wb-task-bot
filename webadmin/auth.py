@@ -1,3 +1,5 @@
+import hmac
+
 from fastapi import Request
 
 from webadmin.config import get_webadmin_settings
@@ -10,7 +12,7 @@ class StaffLoginRequired(Exception):
 
 
 def check_staff_password(password: str) -> bool:
-    return password == get_webadmin_settings().webadmin_password
+    return hmac.compare_digest(password, get_webadmin_settings().webadmin_password)
 
 
 def is_staff(request: Request) -> bool:
