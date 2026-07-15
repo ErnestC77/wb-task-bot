@@ -31,7 +31,7 @@ async def main() -> None:
             select(TaskConfig).where(TaskConfig.is_active == True))).scalars().all()  # noqa: E712
         for cfg in configs:
             old = cfg.next_run_at
-            cfg.next_run_at = compute_next_run(cfg, now)
+            cfg.next_run_at = compute_next_run(cfg, now, after_change=True)
             print(f"{cfg.external_task_id}: {old} -> {cfg.next_run_at}")
         await session.commit()
     await engine.dispose()
