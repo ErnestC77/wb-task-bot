@@ -66,6 +66,40 @@ def test_cron_invalid_expression_raises():
         compute_next_run(c, datetime(2026, 7, 10, 9, 0))
 
 
+def test_after_change_allows_same_day_if_time_not_passed():
+    """rebuild_config_job (after_change=True) не должен «перепрыгивать» сегодняшний
+    слот, если время ещё не наступило — иначе задача, изменённая в Sheets
+    сегодня утром на сегодняшний вечер, улетит только через полный цикл."""
+    c = cfg(schedule_type="every_n_days", schedule_interval=2, time=time(18, 0))
+    nxt = compute_next_run(c, datetime(2026, 7, 15, 9, 0), after_change=True)
+    assert nxt == datetime(2026, 7, 15, 18, 0)                # сегодня, время ещё не прошло
+
+    c_daily = cfg(schedule_type="daily", time=time(18, 0))
+    nxt_daily = compute_next_run(c_daily, datetime(2026, 7, 15, 9, 0), after_change=True)
+    assert nxt_daily == datetime(2026, 7, 15, 18, 0)
+
+
+def test_after_change_falls_back_when_today_time_passed():
+    c = cfg(schedule_type="every_n_days", schedule_interval=2, time=time(8, 0))
+    nxt = compute_next_run(c, datetime(2026, 7, 15, 9, 0), after_change=True)
+    assert nxt == datetime(2026, 7, 17, 8, 0)                 # 08:00 уже прошло — обычный цикл
+
+
+def test_after_change_weekly_respects_target_weekday():
+    # 2026-07-15 — среда (weekday=2); понедельник (0) сегодня не подходит.
+    c = cfg(schedule_type="weekly", schedule_value="0", time=time(18, 0))
+    nxt = compute_next_run(c, datetime(2026, 7, 15, 9, 0), after_change=True)
+    assert nxt == datetime(2026, 7, 20, 18, 0)                # ближайший понедельник, не сегодня
+
+    c_today = cfg(schedule_type="weekly", schedule_value="2", time=time(18, 0))  # среда
+    nxt_today = compute_next_run(c_today, datetime(2026, 7, 15, 9, 0), after_change=True)
+    assert nxt_today == datetime(2026, 7, 15, 18, 0)          # сегодня — целевой день недели
+
+    c_default = cfg(schedule_type="weekly", schedule_value="0", time=time(18, 0))
+    nxt_default = compute_next_run(c_default, datetime(2026, 7, 15, 9, 0))  # after_change=False
+    assert nxt_default == datetime(2026, 7, 20, 18, 0)        # старое поведение не сломано
+
+
 async def test_run_config_idempotent(session_factory):
     async with session_factory() as s:
         user = await UserRepository(s).upsert(telegram_id=1, name="Валя", role=Role.MANAGER_WB)

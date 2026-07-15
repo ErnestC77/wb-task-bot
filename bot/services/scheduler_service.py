@@ -22,8 +22,22 @@ def _skip_weekend(dt: datetime, allow: bool) -> datetime:
     return dt
 
 
-def compute_next_run(config: TaskConfig, after: datetime) -> datetime | None:
+def compute_next_run(
+    config: TaskConfig, after: datetime, after_change: bool = False,
+) -> datetime | None:
+    """after_change=True (вызов из rebuild_config_job после реального изменения
+    расписания) допускает попадание next_run_at на СЕГОДНЯ, если время ещё не
+    прошло — иначе (обычный путь из run_config, "after" = момент, когда задача
+    уже отправлена) DAILY/EVERY_N_DAYS/WEEKLY всегда переносятся минимум на
+    следующий цикл, т.к. на сегодня отправка уже случилась."""
     st = config.schedule_type
+    if after_change and st in (ScheduleType.DAILY, ScheduleType.EVERY_N_DAYS,
+                                ScheduleType.WEEKLY):
+        weekday_ok = st != ScheduleType.WEEKLY or after.weekday() in [
+            int(v) for v in str(config.schedule_value or "0").split(",") if v.strip()]
+        today_candidate = _at(after.date(), config.time)
+        if weekday_ok and today_candidate > after:
+            return _skip_weekend(today_candidate, config.run_on_weekends)
     if st == ScheduleType.DAILY:
         nxt = _at(after.date() + timedelta(days=1), config.time)
     elif st == ScheduleType.EVERY_N_DAYS:
@@ -115,7 +129,7 @@ class SchedulerService:
             if config is None:
                 return
             base = datetime.utcnow()
-            config.next_run_at = (compute_next_run(config, base)
+            config.next_run_at = (compute_next_run(config, base, after_change=True)
                                   if config.is_active else None)
             await session.commit()
             job_id = f"config:{config_id}"

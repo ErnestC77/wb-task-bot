@@ -37,6 +37,14 @@ logger = get_logger(__name__)
 # Часть Б: полный scope вместо .readonly — «Журнал отправок» пишет в таблицу.
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 DELIVERY_LOG_HEADER = ["Задача", "Чат/тема", "Время отправки", "Дедлайн"]
+# Часть А: поля, от которых зависит APScheduler-джоб конфига. rebuild_config_job
+# пересчитывает next_run_at от "сейчас" (не идемпотентно для периодических
+# расписаний) — вызывать его нужно только когда что-то из этого списка реально
+# поменялось, иначе next_run_at будет сдвигаться вперёд при каждом автосинке.
+_SCHEDULE_AFFECTING_FIELDS = (
+    "time", "schedule_type", "schedule_value", "schedule_interval",
+    "run_on_weekends", "is_active",
+)
 
 
 @dataclass
@@ -45,11 +53,12 @@ class SyncReport:
     updated: int = 0
     deactivated: int = 0
     skipped_conflicts: list[str] = field(default_factory=list)
-    # id добавленных/обновлённых/деактивированных TaskConfig за проход
-    # sync_tasks() (другие листы планировщик не трогают — там поле пустое).
-    # Использовать ТОЛЬКО после реального (dry_run=False) закоммиченного
-    # прогона: при dry-run savepoint откатывается, id добавленных строк —
-    # временные и в БД не существуют.
+    # id TaskConfig за проход sync_tasks(), у которых реально изменилось
+    # хотя бы одно расписание-влияющее поле (_SCHEDULE_AFFECTING_FIELDS),
+    # плюс все добавленные и все деактивированные (другие листы планировщик
+    # не трогают — там поле пустое). Использовать ТОЛЬКО после реального
+    # (dry_run=False) закоммиченного прогона: при dry-run savepoint
+    # откатывается, id добавленных строк — временные и в БД не существуют.
     changed_config_ids: list[int] = field(default_factory=list)
 
 
@@ -343,8 +352,12 @@ class GoogleSheetsService:
                         "need_approval": _truthy(row.get("need_approval", "0"), default=False),
                         "is_active": _truthy(row.get("active", "1")),
                     }
+                    schedule_changed = existing is None or any(
+                        getattr(existing, fname) != data[fname]
+                        for fname in _SCHEDULE_AFFECTING_FIELDS)
                     cfg = await task_repo.upsert_config(data)
-                    report.changed_config_ids.append(cfg.id)
+                    if schedule_changed:
+                        report.changed_config_ids.append(cfg.id)
                     if existing is None:
                         report.added += 1
                     else:

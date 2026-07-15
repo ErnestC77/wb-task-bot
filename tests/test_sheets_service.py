@@ -325,8 +325,12 @@ async def test_auto_sync_job_skips_when_disabled(session_factory):
 
 
 async def test_sync_tasks_reports_changed_config_ids(session_factory):
-    """Часть А: SyncReport перечисляет id добавленных/обновлённых/
-    деактивированных конфигов — по ним вызывающий код пересоберёт джобы."""
+    """Часть А: SyncReport перечисляет id добавленных/реально изменённых
+    (расписание-влияющие поля)/деактивированных конфигов — по ним вызывающий
+    код пересоберёт джобы. Синк без реальных изменений в расписании НЕ должен
+    попадать в changed_config_ids — иначе rebuild_config_job на каждом
+    часовом автосинке будет сдвигать next_run_at вперёд, даже когда ничего
+    не поменялось (баг, из-за которого задачи переставали отправляться)."""
     from bot.services.google_sheets_service import SyncReport
 
     assert SyncReport().changed_config_ids == []          # default — пустой список
@@ -340,9 +344,17 @@ async def test_sync_tasks_reports_changed_config_ids(session_factory):
         assert report.changed_config_ids == [cfg.id]
         cfg_id = cfg.id
 
-    async with session_factory() as s:                    # обновление
+    async with session_factory() as s:                    # повтор без изменений
         svc = GoogleSheetsService(s, client=None)
         report = await svc.sync_tasks(TASK_ROWS, dry_run=False)
+        await s.commit()
+        assert report.changed_config_ids == []
+        assert report.updated == 1                        # апдейт был, но не расписания
+
+    changed_time_rows = [dict(TASK_ROWS[0], time="19:00")]
+    async with session_factory() as s:                    # реальное изменение time
+        svc = GoogleSheetsService(s, client=None)
+        report = await svc.sync_tasks(changed_time_rows, dry_run=False)
         await s.commit()
         assert report.changed_config_ids == [cfg_id]
 
