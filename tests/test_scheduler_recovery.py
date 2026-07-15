@@ -48,8 +48,9 @@ async def test_recover_registers_all_jobs(session_factory):
     counters = await recover_jobs(scheduler, AsyncMock(), session_factory)
     job_ids = {j.id for j in scheduler.get_jobs()}
     assert f"config:{cfg_id}" in job_ids
-    assert f"remind1:{inst_id}" in job_ids and f"remind2:{inst_id}" in job_ids
-    assert f"overdue:{inst_id}" in job_ids
+    assert f"not_taken:{inst_id}" in job_ids
+    assert f"remind1:{inst_id}" not in job_ids and f"remind2:{inst_id}" not in job_ids
+    assert f"overdue:{inst_id}" not in job_ids
     assert f"auto_approve:{waiting_id}" in job_ids
     assert f"retry_delivery:{inst_id}:recover" in job_ids
     assert counters["configs"] >= 1 and counters["auto_approve"] == 1

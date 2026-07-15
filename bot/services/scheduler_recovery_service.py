@@ -34,11 +34,11 @@ async def recover_jobs(scheduler, bot, session_factory) -> dict[str, int]:
     from bot.services.approval_service import auto_approve_job
     from bot.services.delivery_service import DeliveryService
     from bot.services.question_service import escalation_job
-    from bot.services.reminder_service import overdue_job, reminder_job
+    from bot.services.reminder_service import not_taken_reminder_job
     from bot.services.scheduler_service import SchedulerService, compute_next_run
     from bot.services.setting_service import SettingService
 
-    counters = {"configs": 0, "reminders": 0, "overdue": 0,
+    counters = {"configs": 0, "reminders": 0,
                 "auto_approve": 0, "questions": 0, "deliveries": 0}
     svc = SchedulerService(scheduler, bot, session_factory)
 
@@ -55,20 +55,14 @@ async def recover_jobs(scheduler, bot, session_factory) -> dict[str, int]:
             counters["configs"] += 1
         await session.commit()
 
-        # 2) напоминания и overdue открытых задач
+        # 2) единственное напоминание "не взято в работу" открытых задач
+        not_taken_hours = int(await settings.get("reminders.not_taken_after_hours"))
         for inst in await repo.get_open_with_reminders():
             base = inst.scheduled_at
-            for n, hours in ((1, inst.remind_after_hours_snapshot),
-                             (2, inst.second_remind_after_hours_snapshot)):
-                if hours:
-                    _add_job(scheduler, reminder_job,
-                            _not_past(base + timedelta(hours=hours)),
-                            [inst.id, n, bot, session_factory, scheduler],
-                            f"remind{n}:{inst.id}")
-                    counters["reminders"] += 1
-            _add_job(scheduler, overdue_job, _not_past(base + timedelta(hours=24)),
-                    [inst.id, bot, session_factory], f"overdue:{inst.id}")
-            counters["overdue"] += 1
+            _add_job(scheduler, not_taken_reminder_job,
+                    _not_past(base + timedelta(hours=not_taken_hours)),
+                    [inst.id, bot, session_factory], f"not_taken:{inst.id}")
+            counters["reminders"] += 1
 
         # 3) auto-approve для waiting_approval — по snapshot-дедлайну
         for inst in await repo.get_waiting_approval():
