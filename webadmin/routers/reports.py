@@ -34,6 +34,12 @@ async def _schedule_context(session: AsyncSession, period: str, anchor: str | No
     return {"period": period, "start": start, "end": end, "days": days, "rows": rows}
 
 
+def _parse_date_range(start: str | None, end: str | None) -> tuple[date, date]:
+    range_start = date.fromisoformat(start) if start else date.today().replace(day=1)
+    range_end = date.fromisoformat(end) if end else date.today()
+    return range_start, range_end
+
+
 @router.get("/schedule", response_class=HTMLResponse, dependencies=[Depends(require_staff)])
 async def schedule_page(request: Request, session: AsyncSession = Depends(get_db),
                         period: str = Query("week"), anchor: str | None = Query(None),
@@ -54,8 +60,7 @@ async def client_schedule_page(request: Request, session: AsyncSession = Depends
 @router.get("/delivery-log", response_class=HTMLResponse, dependencies=[Depends(require_staff)])
 async def delivery_log_page(request: Request, session: AsyncSession = Depends(get_db),
                             start: str | None = Query(None), end: str | None = Query(None)):
-    range_start = date.fromisoformat(start) if start else date.today().replace(day=1)
-    range_end = date.fromisoformat(end) if end else date.today()
+    range_start, range_end = _parse_date_range(start, end)
     stmt = (select(TaskInstance, Topic.topic_name)
             .outerjoin(Topic, TaskInstance.topic_id == Topic.id)
             .where(TaskInstance.delivery_status == DeliveryStatus.SENT,
@@ -71,8 +76,7 @@ async def delivery_log_page(request: Request, session: AsyncSession = Depends(ge
 @router.get("/status-history", response_class=HTMLResponse, dependencies=[Depends(require_staff)])
 async def status_history_page(request: Request, session: AsyncSession = Depends(get_db),
                                start: str | None = Query(None), end: str | None = Query(None)):
-    range_start = date.fromisoformat(start) if start else date.today().replace(day=1)
-    range_end = date.fromisoformat(end) if end else date.today()
+    range_start, range_end = _parse_date_range(start, end)
     stmt = (select(TaskLog, TaskInstance.title_snapshot, User.name)
             .join(TaskInstance, TaskLog.task_instance_id == TaskInstance.id)
             .outerjoin(User, TaskLog.user_id == User.id)
