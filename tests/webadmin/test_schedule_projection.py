@@ -54,6 +54,18 @@ def test_cron_matches_expression():
     assert result == [datetime(2026, 7, 15, 14, 30), datetime(2026, 7, 16, 14, 30)]
 
 
+def test_cron_boundary_at_2359_does_not_leak_previous_day():
+    c = cfg(schedule_type="cron", schedule_value="59 23 * * *")
+    result = project_occurrences(c, date(2026, 7, 15), date(2026, 7, 16))
+    assert [d.date() for d in result] == [date(2026, 7, 15), date(2026, 7, 16)]
+
+
+def test_every_n_days_falls_back_to_range_start_when_no_anchor_available():
+    c = cfg(schedule_type="every_n_days", schedule_interval=3)  # next_run_at и created_at оба None
+    result = project_occurrences(c, date(2026, 7, 13), date(2026, 7, 20))
+    assert [d.date() for d in result] == [date(2026, 7, 13), date(2026, 7, 16), date(2026, 7, 19)]
+
+
 def test_inactive_config_returns_nothing():
     c = cfg(schedule_type="daily", is_active=False)
     assert project_occurrences(c, date(2026, 7, 13), date(2026, 7, 15)) == []

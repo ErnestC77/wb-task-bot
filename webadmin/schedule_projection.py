@@ -21,7 +21,9 @@ def project_occurrences(config: TaskConfig, range_start: date, range_end: date) 
     от anchor", и не годится для произвольного диапазона, включая прошлое).
     Для EVERY_N_DAYS единственный способ узнать фазу цикла без реального
     anchor — взять config.next_run_at (уже корректно посчитан планировщиком)
-    как точку отсчёта; если его нет — created_at."""
+    как точку отсчёта; если его нет — created_at; если и его нет (например,
+    ещё не сохранённый в БД TaskConfig с server_default) — range_start, чтобы
+    хотя бы интервал был детерминированным в пределах всего вызова."""
     if not config.is_active:
         return []
     st = config.schedule_type
@@ -32,18 +34,18 @@ def project_occurrences(config: TaskConfig, range_start: date, range_end: date) 
     for d in date_range(range_start, range_end):
         if not config.run_on_weekends and d.weekday() >= 5:
             continue
-        if _matches(config, st, d):
+        if _matches(config, st, d, range_start):
             result.append(datetime.combine(d, t))
     return result
 
 
-def _matches(config: TaskConfig, st: str, d: date) -> bool:
+def _matches(config: TaskConfig, st: str, d: date, range_start: date) -> bool:
     if st == ScheduleType.DAILY:
         return True
     if st == ScheduleType.EVERY_N_DAYS:
         interval = config.schedule_interval or 1
         anchor = (config.next_run_at.date() if config.next_run_at
-                  else (config.created_at.date() if config.created_at else d))
+                  else (config.created_at.date() if config.created_at else range_start))
         return (d - anchor).days % interval == 0
     if st == ScheduleType.WEEKLY:
         targets = [int(v) for v in str(config.schedule_value or "0").split(",") if v.strip()]
@@ -56,7 +58,7 @@ def _matches(config: TaskConfig, st: str, d: date) -> bool:
 
 def _project_cron(config: TaskConfig, range_start: date, range_end: date) -> list[datetime]:
     trigger = CronTrigger.from_crontab(config.schedule_value or "0 9 * * *")
-    cursor = datetime.combine(range_start - timedelta(days=1), time(23, 59))
+    cursor = datetime.combine(range_start - timedelta(days=1), time(23, 59, 59, 999999))
     previous = None
     result: list[datetime] = []
     for _ in range(400):  # предохранитель от зацикливания на битом выражении
