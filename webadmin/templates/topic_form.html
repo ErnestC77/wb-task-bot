@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ "Редактировать" if topic else "Новая" }} тема{% endblock %}
+{% block content %}
+<form method="post" class="bg-white p-6 rounded shadow-md max-w-md space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+    {% if error %}<p class="text-red-600 text-sm">{{ error }}</p>{% endif %}
+    {% if not topic %}
+    <div>
+        <label class="block text-sm font-medium">Ключ (topic_key)</label>
+        <input type="text" name="topic_key" required class="w-full border rounded px-3 py-2">
+    </div>
+    {% endif %}
+    <div>
+        <label class="block text-sm font-medium">Название</label>
+        <input type="text" name="topic_name" value="{{ topic.topic_name if topic else '' }}" required class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Telegram thread ID</label>
+        <input type="text" name="message_thread_id" value="{{ topic.message_thread_id if topic and topic.message_thread_id else '' }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Типы событий (через запятую)</label>
+        <input type="text" name="event_types" value="{{ topic.event_types if topic and topic.event_types else '' }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <label class="flex items-center gap-2">
+        <input type="checkbox" name="is_active" {{ "checked" if not topic or topic.is_active else "" }}>
+        Активна
+    </label>
+    <button type="submit" class="bg-slate-800 text-white px-4 py-2 rounded">Сохранить</button>
+</form>
+{% endblock %}
