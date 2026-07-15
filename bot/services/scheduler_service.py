@@ -68,6 +68,19 @@ def compute_next_run(
     return _skip_weekend(nxt, config.run_on_weekends) if nxt else None
 
 
+async def pending_rebuild_job(bot, session_factory, scheduler_svc) -> None:
+    """Каждые 30 секунд подхватывает задачи, изменённые через веб-админку
+    (Часть Ж): веб-форма выставляет TaskConfig.pending_rebuild=True вместо
+    того, чтобы самой считать next_run_at. rebuild_config_job — тот же,
+    что уже используют Sheets-синк и Telegram /admin — делает пересчёт и
+    сам сбрасывает флаг."""
+    from bot.database.repositories.task_repository import TaskRepository
+    async with session_factory() as session:
+        config_ids = [cfg.id for cfg in await TaskRepository(session).get_pending_rebuild()]
+    for config_id in config_ids:
+        await scheduler_svc.rebuild_config_job(config_id)
+
+
 class SchedulerService:
     def __init__(self, scheduler: AsyncIOScheduler, bot: Bot, session_factory) -> None:
         self.scheduler = scheduler
@@ -122,7 +135,12 @@ class SchedulerService:
             id=f"config:{config.id}", replace_existing=True, misfire_grace_time=GRACE)
 
     async def rebuild_config_job(self, config_id: int) -> None:
-        """Вызывается админ-панелью после изменения расписания."""
+        """Вызывается админ-панелью, Sheets-синком и pending_rebuild_job'ом
+        (Часть Ж) после изменения расписания — единственное место, где
+        реально пересчитывается next_run_at и переустанавливается живой
+        APScheduler-джоб. Сбрасывает pending_rebuild безусловно: даже если
+        вызывающий код (Sheets-синк) не выставлял этот флаг, сброс уже-False
+        значения — no-op."""
         from bot.database.repositories.task_repository import TaskRepository
         async with self.session_factory() as session:
             config = await TaskRepository(session).get_config(config_id)
@@ -131,6 +149,7 @@ class SchedulerService:
             base = datetime.utcnow()
             config.next_run_at = (compute_next_run(config, base, after_change=True)
                                   if config.is_active else None)
+            config.pending_rebuild = False
             await session.commit()
             job_id = f"config:{config_id}"
             if self.scheduler.get_job(job_id):
@@ -204,6 +223,15 @@ class SchedulerService:
             self.scheduler.add_job(auto_sync_job, "interval", minutes=minutes,
                                    args=[self.bot, self.session_factory, self],
                                    id="auto_sync", misfire_grace_time=GRACE)
+
+    async def register_pending_rebuild_job(self) -> None:
+        """Всегда включён — не опциональная фича вроде Sheets-синка, а
+        базовая корректность живого подхвата изменений из веб-админки."""
+        if self.scheduler.get_job("pending_rebuild"):
+            self.scheduler.remove_job("pending_rebuild")
+        self.scheduler.add_job(pending_rebuild_job, "interval", seconds=30,
+                               args=[self.bot, self.session_factory, self],
+                               id="pending_rebuild", misfire_grace_time=GRACE)
 
     async def register_delivery_log_job(self) -> None:
         """Часть Б: по образцу register_sync_job — снимает job "delivery_log"
@@ -294,4 +322,5 @@ async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     await svc.register_delivery_log_job()
     await svc.register_status_notification_job()
     await svc.register_status_history_job()
+    await svc.register_pending_rebuild_job()
     return scheduler

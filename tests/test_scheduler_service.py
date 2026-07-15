@@ -399,3 +399,66 @@ async def test_register_instance_jobs_not_taken_default_12(session_factory):
     job = scheduler.get_job(f"not_taken:{inst.id}")
     assert job.trigger.run_date.replace(tzinfo=None) == \
         datetime(2026, 7, 10, 9, 0) + timedelta(hours=12)
+
+
+async def test_rebuild_config_job_clears_pending_rebuild(session_factory):
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=9, name="Валя",
+                                              role=Role.MANAGER_WB)
+        repo = TaskRepository(s)
+        cfg = await repo.upsert_config(dict(
+            external_task_id="clears_pending", title="Проверка",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=user.id, is_active=True))
+        cfg.pending_rebuild = True
+        await s.commit()
+        config_id = cfg.id
+
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.rebuild_config_job(config_id)
+
+    async with session_factory() as s:
+        cfg = await TaskRepository(s).get_config(config_id)
+        assert cfg.pending_rebuild is False
+
+
+async def test_pending_rebuild_job_rebuilds_flagged_configs(session_factory):
+    from bot.services.scheduler_service import pending_rebuild_job
+
+    async with session_factory() as s:
+        user = await UserRepository(s).upsert(telegram_id=11, name="Валя",
+                                              role=Role.MANAGER_WB)
+        repo = TaskRepository(s)
+        cfg = await repo.upsert_config(dict(
+            external_task_id="job_picks_me_up", title="Подхватить",
+            scenario="simple", schedule_type="daily",
+            responsible_user_id=user.id, is_active=True))
+        cfg.pending_rebuild = True
+        await s.commit()
+        config_id = cfg.id
+
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await pending_rebuild_job(AsyncMock(), session_factory, svc)
+
+    assert scheduler.get_job(f"config:{config_id}") is not None
+    async with session_factory() as s:
+        cfg = await TaskRepository(s).get_config(config_id)
+        assert cfg.pending_rebuild is False
+
+
+async def test_pending_rebuild_job_does_nothing_when_none_flagged(session_factory):
+    from bot.services.scheduler_service import pending_rebuild_job
+
+    scheduler = AsyncIOScheduler(timezone="UTC")
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await pending_rebuild_job(AsyncMock(), session_factory, svc)   # не должен упасть
+    assert scheduler.get_jobs() == []
+
+
+async def test_setup_scheduler_registers_pending_rebuild_job(session_factory):
+    from bot.services.scheduler_service import setup_scheduler
+
+    scheduler = await setup_scheduler(AsyncMock(), session_factory)
+    assert scheduler.get_job("pending_rebuild") is not None
