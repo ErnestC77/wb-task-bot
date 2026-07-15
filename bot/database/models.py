@@ -178,6 +178,12 @@ class TaskConfig(TimestampMixin, Base):
     second_remind_after_hours: Mapped[int | None] = mapped_column(Integer)
     question_receiver_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Часть Ж (live-подхват из веб-админки): веб-форма выставляет True при
+    # сохранении вместо того, чтобы самой считать next_run_at — единственный
+    # источник истины по пересчёту расписания остаётся в rebuild_config_job
+    # (тот же, что уже вызывает Sheets-синк). Сбрасывается rebuild_config_job'ом.
+    pending_rebuild: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false")
 
     responsible_user: Mapped["User | None"] = relationship(
         lazy="joined", foreign_keys=[responsible_user_id])

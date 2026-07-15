@@ -125,3 +125,20 @@ async def test_get_unlogged_status_logs_no_status_filter(session):
 
     rows = await repo.get_unlogged_status_logs()
     assert [r.id for r in rows] == [any_status.id, notified.id]
+
+
+async def test_get_pending_rebuild_returns_only_flagged_configs(session):
+    repo = TaskRepository(session)
+    flagged = await repo.upsert_config(dict(
+        external_task_id="flagged", title="Flagged", schedule_type="daily",
+        is_active=True))
+    flagged.pending_rebuild = True
+    not_flagged = await repo.upsert_config(dict(
+        external_task_id="not_flagged", title="Not flagged", schedule_type="daily",
+        is_active=True))
+    await session.commit()
+
+    result = await repo.get_pending_rebuild()
+    result_ids = {c.id for c in result}
+    assert flagged.id in result_ids
+    assert not_flagged.id not in result_ids

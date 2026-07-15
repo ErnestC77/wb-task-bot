@@ -33,6 +33,10 @@ class TaskRepository:
         return list(await self.session.scalars(
             select(TaskConfig).where(TaskConfig.is_active.is_(True))))
 
+    async def get_pending_rebuild(self) -> list[TaskConfig]:
+        return list(await self.session.scalars(
+            select(TaskConfig).where(TaskConfig.pending_rebuild.is_(True))))
+
     async def get_all_configs(self, include_inactive: bool = False) -> list[TaskConfig]:
         """Task 27: список шаблонов в админ-панели (в отличие от get_active_configs,
         нужны и неактивные — та же пара методов, что TopicRepository.get_all /
