@@ -41,17 +41,21 @@ class UserRepository:
         return list(await self.session.scalars(stmt))
 
     async def upsert(self, telegram_id: int, name: str, role: str,
-                      username: str | None = None, is_active: bool = True) -> User:
+                      username: str | None = None, is_active: bool = True,
+                      private_chat_available: bool | None = None) -> User:
         user = await self.get_by_telegram_id(telegram_id)
         if user is None:
             user = User(telegram_id=telegram_id, name=name, role=role,
-                        username=username, is_active=is_active)
+                        username=username, is_active=is_active,
+                        private_chat_available=bool(private_chat_available))
             self.session.add(user)
         else:
             user.name = name
             user.role = role
             user.username = username
             user.is_active = is_active
+            if private_chat_available is not None:
+                user.private_chat_available = private_chat_available
         await self.session.flush()
         return user
 

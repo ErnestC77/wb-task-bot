@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Пользователи{% endblock %}
+{% block content %}
+<div class="mb-4"><a href="/users/new" class="bg-slate-800 text-white px-3 py-2 rounded">+ Новый пользователь</a></div>
+<table class="min-w-full bg-white border border-gray-200 text-sm">
+    <thead><tr>
+        <th class="border px-3 py-2">Telegram ID</th>
+        <th class="border px-3 py-2">Имя</th>
+        <th class="border px-3 py-2">Роль</th>
+        <th class="border px-3 py-2">Активен</th>
+        <th class="border px-3 py-2"></th>
+    </tr></thead>
+    <tbody>
+        {% for u in users %}
+        <tr>
+            <td class="border px-3 py-2">{{ u.telegram_id }}</td>
+            <td class="border px-3 py-2">{{ u.name }}</td>
+            <td class="border px-3 py-2">{{ u.role }}</td>
+            <td class="border px-3 py-2">{{ "Да" if u.is_active else "Нет" }}</td>
+            <td class="border px-3 py-2"><a href="/users/{{ u.id }}/edit" class="text-blue-600 hover:underline">Редактировать</a></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

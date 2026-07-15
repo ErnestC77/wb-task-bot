@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}{{ "Редактировать" if user else "Новый" }} пользователь{% endblock %}
+{% block content %}
+<form method="post" class="bg-white p-6 rounded shadow-md max-w-md space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+    {% if error %}<p class="text-red-600 text-sm">{{ error }}</p>{% endif %}
+    {% if not user %}
+    <div>
+        <label class="block text-sm font-medium">Telegram ID</label>
+        <input type="text" name="telegram_id" required class="w-full border rounded px-3 py-2">
+    </div>
+    {% endif %}
+    <div>
+        <label class="block text-sm font-medium">Имя</label>
+        <input type="text" name="name" value="{{ user.name if user else '' }}" required class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Роль</label>
+        <select name="role" class="w-full border rounded px-3 py-2">
+            {% for r in roles %}
+            <option value="{{ r }}" {{ "selected" if user and user.role == r else "" }}>{{ r }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <label class="flex items-center gap-2">
+        <input type="checkbox" name="is_active" {{ "checked" if not user or user.is_active else "" }}>
+        Активен
+    </label>
+    <label class="flex items-center gap-2">
+        <input type="checkbox" name="private_chat_available" {{ "checked" if user and user.private_chat_available else "" }}>
+        Доступны личные сообщения
+    </label>
+    <button type="submit" class="bg-slate-800 text-white px-4 py-2 rounded">Сохранить</button>
+</form>
+{% endblock %}
