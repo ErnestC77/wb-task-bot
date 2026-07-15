@@ -73,9 +73,10 @@ SETTINGS_DEFAULTS: list[tuple[str, object, str, str]] = [
     ("approval.notify_on_auto_approve", True, "bool", "approval"),
     ("approval.allow_return_to_work", True, "bool", "approval"),
     ("approval.return_comment_required", True, "bool", "approval"),
-    # reminders (14)
+    # reminders (15)
     ("reminders.first_after_hours", 3, "int", "reminders"),
     ("reminders.second_after_hours", 6, "int", "reminders"),
+    ("reminders.not_taken_after_hours", 12, "int", "reminders"),
     ("reminders.extra_enabled", False, "bool", "reminders"),
     ("reminders.repeat_interval_hours", 4, "int", "reminders"),
     ("reminders.max_count", 2, "int", "reminders"),
