@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}{{ "Редактировать" if task else "Новая" }} задача{% endblock %}
+{% block content %}
+<form method="post" class="bg-white p-6 rounded shadow-md max-w-xl space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
+    {% if error %}<p class="text-red-600 text-sm">{{ error }}</p>{% endif %}
+    <div>
+        <label class="block text-sm font-medium">Название</label>
+        <input type="text" name="title" value="{{ task.title if task else '' }}" required class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Описание</label>
+        <textarea name="description" class="w-full border rounded px-3 py-2">{{ task.description if task and task.description else '' }}</textarea>
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Сценарий</label>
+        <select name="scenario" class="w-full border rounded px-3 py-2">
+            <option value="simple" {{ "selected" if not task or task.scenario == "simple" else "" }}>simple</option>
+            <option value="article_check" {{ "selected" if task and task.scenario == "article_check" else "" }}>article_check</option>
+        </select>
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Ответственный (пользователь)</label>
+        <select name="responsible_user_id" class="w-full border rounded px-3 py-2">
+            <option value="">—</option>
+            {% for u in users %}
+            <option value="{{ u.id }}" {{ "selected" if task and task.responsible_user_id == u.id else "" }}>{{ u.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Или роль</label>
+        <select name="responsible_role" class="w-full border rounded px-3 py-2">
+            <option value="">—</option>
+            {% for r in roles %}
+            <option value="{{ r }}" {{ "selected" if task and task.responsible_role == r else "" }}>{{ r }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Тема</label>
+        <select name="topic_id" class="w-full border rounded px-3 py-2">
+            <option value="">—</option>
+            {% for t in topics %}
+            <option value="{{ t.id }}" {{ "selected" if task and task.topic_id == t.id else "" }}>{{ t.topic_name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Тип расписания</label>
+        <select name="schedule_type" class="w-full border rounded px-3 py-2">
+            {% for st in ["daily", "weekly", "monthly", "every_n_days", "cron"] %}
+            <option value="{{ st }}" {{ "selected" if task and task.schedule_type == st else "" }}>{{ st }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Значение расписания (дни недели 0-6 через запятую / день месяца / cron-выражение)</label>
+        <input type="text" name="schedule_value" value="{{ task.schedule_value if task and task.schedule_value else '' }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Интервал в днях (для every_n_days)</label>
+        <input type="text" name="schedule_interval" value="{{ task.schedule_interval if task and task.schedule_interval else '' }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Время отправки (ЧЧ:ММ)</label>
+        <input type="text" name="time" value="{{ task.time.strftime('%H:%M') if task and task.time else '09:00' }}" required class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Дедлайн (ЧЧ:ММ, пусто = сутки от отправки)</label>
+        <input type="text" name="due_time" value="{{ task.due_time.strftime('%H:%M') if task and task.due_time else '' }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <div>
+        <label class="block text-sm font-medium">Дедлайн: дней после отправки</label>
+        <input type="text" name="due_days_offset" value="{{ task.due_days_offset if task else 0 }}" class="w-full border rounded px-3 py-2">
+    </div>
+    <label class="flex items-center gap-2">
+        <input type="checkbox" name="need_approval" {{ "checked" if task and task.need_approval else "" }}>
+        Нужно подтверждение
+    </label>
+    <label class="flex items-center gap-2">
+        <input type="checkbox" name="is_active" {{ "checked" if task and task.is_active else "" }}>
+        Активна
+    </label>
+    <button type="submit" class="bg-slate-800 text-white px-4 py-2 rounded">Сохранить</button>
+</form>
+{% endblock %}
