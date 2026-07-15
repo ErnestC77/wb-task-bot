@@ -53,6 +53,30 @@ def test_render_mentions_responsible_user_by_id():
     assert ">Валя</a>" in text
 
 
+def test_render_due_at_same_day_says_today():
+    inst = make_inst(TaskStatus.CREATED)
+    text = render_task_message(inst)
+    assert "Срок: сегодня до 12:00" in text
+
+
+def test_render_due_at_next_day_says_tomorrow():
+    """due_time не задан в конфиге -> due_at = scheduled_at + 24ч (срок "сутки"),
+    его дата всегда на день позже scheduled_at — раньше текст всё равно писал
+    "сегодня", что вводило пользователей в заблуждение."""
+    inst = make_inst(TaskStatus.CREATED)
+    inst.due_at = datetime(2026, 7, 11, 9)
+    text = render_task_message(inst)
+    assert "Срок: завтра до 09:00" in text
+    assert "сегодня" not in text
+
+
+def test_render_due_at_far_future_shows_date():
+    inst = make_inst(TaskStatus.CREATED)
+    inst.due_at = datetime(2026, 7, 15, 18, 0)
+    text = render_task_message(inst)
+    assert "Срок: до 15.07 18:00" in text
+
+
 def test_render_reminder_escapes_html():
     inst = make_inst(TaskStatus.CREATED)
     inst.title_snapshot = "<script>x</script>"

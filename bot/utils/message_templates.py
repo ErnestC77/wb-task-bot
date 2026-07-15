@@ -21,6 +21,19 @@ STATUS_LABELS = {
 }
 
 
+def _due_at_label(inst: TaskInstance) -> str:
+    """due_at не всегда совпадает по дате с scheduled_at: due_days_offset>0
+    или срок "сутки" (due_time не задан в конфиге -> due_at = scheduled_at
+    + 24ч, calendar.date() всегда на день позже) — жёсткое "сегодня" тут
+    вводило в заблуждение."""
+    days = (inst.due_at.date() - inst.scheduled_at.date()).days
+    if days == 0:
+        return f"сегодня до {inst.due_at.strftime('%H:%M')}"
+    if days == 1:
+        return f"завтра до {inst.due_at.strftime('%H:%M')}"
+    return f"до {inst.due_at.strftime('%d.%m %H:%M')}"
+
+
 def render_task_message(inst: TaskInstance) -> str:
     lines = [f"📌 {bold(inst.title_snapshot)}"]
     if inst.description_snapshot:
@@ -31,7 +44,7 @@ def render_task_message(inst: TaskInstance) -> str:
     elif inst.responsible_name_snapshot:
         lines.append(f"Ответственный: {html_escape(inst.responsible_name_snapshot)}")
     if inst.due_at:
-        lines.append(f"Срок: сегодня до {inst.due_at.strftime('%H:%M')}")
+        lines.append(f"Срок: {_due_at_label(inst)}")
     lines.append(f"Статус: {STATUS_LABELS.get(inst.status, html_escape(inst.status))}")
     return "\n".join(lines)
 
