@@ -31,8 +31,8 @@ async def test_login_correct_password_grants_access(client):
     assert resp.status_code == 303
     assert resp.headers["location"] == "/"
     home = await client.get("/")
-    assert home.status_code == 200
-    assert home.text == "ok, staff"
+    assert home.status_code == 307  # RedirectResponse default for GET
+    assert home.headers["location"] == "/schedule"
 
 
 async def test_login_without_csrf_token_rejected(client):

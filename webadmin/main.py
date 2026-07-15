@@ -37,9 +37,9 @@ def create_app() -> FastAPI:
     async def healthz() -> str:
         return "ok"
 
-    @app.get("/", response_class=PlainTextResponse, dependencies=[Depends(require_staff)])
-    async def home() -> str:
-        return "ok, staff"
+    @app.get("/", dependencies=[Depends(require_staff)])
+    async def home() -> RedirectResponse:
+        return RedirectResponse(url="/schedule")
 
     @app.get("/client", dependencies=[Depends(require_client)])
     async def client_home() -> RedirectResponse:

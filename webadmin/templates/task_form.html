@@ -79,7 +79,7 @@
         Нужно подтверждение
     </label>
     <label class="flex items-center gap-2">
-        <input type="checkbox" name="is_active" {{ "checked" if task and task.is_active else "" }}>
+        <input type="checkbox" name="is_active" {{ "checked" if not task or task.is_active else "" }}>
         Активна
     </label>
     <button type="submit" class="bg-slate-800 text-white px-4 py-2 rounded">Сохранить</button>
