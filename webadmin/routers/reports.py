@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
@@ -6,7 +6,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.database.models import TaskConfig
+from bot.database.models import DeliveryStatus, TaskConfig, TaskInstance, Topic
 from webadmin.auth import require_client, require_staff
 from webadmin.deps import get_db
 from webadmin.schedule_projection import (
@@ -49,3 +49,20 @@ async def client_schedule_page(request: Request, session: AsyncSession = Depends
                                direction: int = Query(0)):
     ctx = await _schedule_context(session, period, anchor, direction)
     return templates.TemplateResponse("client_schedule.html", {"request": request, **ctx})
+
+
+@router.get("/delivery-log", response_class=HTMLResponse, dependencies=[Depends(require_staff)])
+async def delivery_log_page(request: Request, session: AsyncSession = Depends(get_db),
+                            start: str | None = Query(None), end: str | None = Query(None)):
+    range_start = date.fromisoformat(start) if start else date.today().replace(day=1)
+    range_end = date.fromisoformat(end) if end else date.today()
+    stmt = (select(TaskInstance, Topic.topic_name)
+            .outerjoin(Topic, TaskInstance.topic_id == Topic.id)
+            .where(TaskInstance.delivery_status == DeliveryStatus.SENT,
+                   TaskInstance.message_sent_at >= datetime.combine(range_start, time.min),
+                   TaskInstance.message_sent_at <= datetime.combine(range_end, time.max))
+            .order_by(TaskInstance.message_sent_at.desc()))
+    rows = [{"instance": inst, "topic_name": topic_name}
+           for inst, topic_name in (await session.execute(stmt)).all()]
+    return templates.TemplateResponse("delivery_log.html", {
+        "request": request, "rows": rows, "start": range_start, "end": range_end})

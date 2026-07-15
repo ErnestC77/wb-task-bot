@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import date, datetime, time
 
 from bot.database.models import TaskConfig
 from tests.webadmin.helpers import login_client, login_staff
@@ -65,3 +65,27 @@ async def test_staff_session_does_not_grant_client_page_access(client):
     resp = await client.get("/client/schedule")
     assert resp.status_code == 303
     assert resp.headers["location"] == "/client/login"
+
+
+async def test_delivery_log_shows_only_sent_instances_in_range(client, session_factory):
+    from bot.database.models import TaskConfig, TaskInstance
+
+    async with session_factory() as session:
+        cfg = TaskConfig(external_task_id="t1", title="Task 1", schedule_type="daily",
+                         time=time(9, 0), is_active=True)
+        session.add(cfg)
+        await session.flush()
+        sent = TaskInstance(
+            config_id=cfg.id, status="completed", scheduled_at=datetime(2026, 7, 10, 9, 0),
+            scheduled_date=date(2026, 7, 10), schedule_key="k1", title_snapshot="Task 1",
+            delivery_status="sent", message_sent_at=datetime(2026, 7, 10, 9, 0, 5))
+        not_sent = TaskInstance(
+            config_id=cfg.id, status="created", scheduled_at=datetime(2026, 7, 11, 9, 0),
+            scheduled_date=date(2026, 7, 11), schedule_key="k2", title_snapshot="Task 1",
+            delivery_status="pending")
+        session.add_all([sent, not_sent])
+        await session.commit()
+    await login_staff(client)
+    resp = await client.get("/delivery-log?start=2026-07-01&end=2026-07-31")
+    assert resp.status_code == 200
+    assert resp.text.count("Task 1") == 1  # только sent-инстанс попал в журнал

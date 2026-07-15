@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Журнал отправок{% endblock %}
+{% block content %}
+<form method="get" class="mb-4 flex items-center gap-3">
+    <label>С <input type="date" name="start" value="{{ start.isoformat() }}" class="border rounded px-2 py-1"></label>
+    <label>По <input type="date" name="end" value="{{ end.isoformat() }}" class="border rounded px-2 py-1"></label>
+    <button type="submit" class="bg-slate-800 text-white px-3 py-1 rounded">Показать</button>
+</form>
+<table class="min-w-full bg-white border border-gray-200 text-sm">
+    <thead>
+        <tr>
+            <th class="border px-3 py-2 text-left">Задача</th>
+            <th class="border px-3 py-2 text-left">Чат/тема</th>
+            <th class="border px-3 py-2 text-left">Время отправки</th>
+            <th class="border px-3 py-2 text-left">Дедлайн</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        <tr>
+            <td class="border px-3 py-2">{{ row.instance.title_snapshot }}</td>
+            <td class="border px-3 py-2">{{ row.topic_name or "—" }}</td>
+            <td class="border px-3 py-2">{{ row.instance.message_sent_at.strftime('%d.%m.%Y %H:%M') if row.instance.message_sent_at else "—" }}</td>
+            <td class="border px-3 py-2">{{ row.instance.due_at.strftime('%d.%m.%Y %H:%M') if row.instance.due_at else "—" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}
