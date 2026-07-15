@@ -12,6 +12,10 @@ class WebAdminSettings(BaseSettings):
     webadmin_password: str
     client_password: str
     webadmin_secret_key: str
+    # Secure-флаг сессионной cookie. True — безопасный дефолт для реального
+    # деплоя за HTTPS; локально (plain http://localhost) переопределяется
+    # через WEBADMIN_HTTPS_ONLY=false в .env, иначе браузер не сохранит cookie.
+    webadmin_https_only: bool = True
 
 
 @lru_cache

@@ -14,15 +14,13 @@ from webadmin.routers.users import router as users_router
 
 def create_app() -> FastAPI:
     app = FastAPI(title="WB Task Bot — веб-админка")
-    # https_only=False is intentional while this runs on local http://; MUST become True
-    # before any real deploy behind HTTPS — do not flip this without confirming TLS is
-    # actually in front of the app.
+    settings = get_webadmin_settings()
     app.add_middleware(
         SessionMiddleware,
-        secret_key=get_webadmin_settings().webadmin_secret_key,
+        secret_key=settings.webadmin_secret_key,
         same_site="strict",
         max_age=8 * 3600,
-        https_only=False,
+        https_only=settings.webadmin_https_only,
     )
 
     @app.exception_handler(StaffLoginRequired)
