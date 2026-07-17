@@ -63,6 +63,7 @@ from bot.services.audit_service import AuditService
 from bot.services.setting_service import SettingService
 from bot.services.user_service import UserService
 from bot.states.admin_states import AdminStates
+from bot.utils.datetime_utils import moscow_to_utc, utc_dt_to_moscow, utc_to_moscow
 from bot.utils.html_utils import html_escape
 from bot.utils.validation import validate_int, validate_time_str
 
@@ -89,7 +90,7 @@ FIELD_TITLES: dict[str, str] = {
     "schedule_type": "Тип расписания",
     "schedule_value": "Значение расписания",
     "schedule_interval": "Интервал (дней)",
-    "time": "Время создания",
+    "time": "Время создания (МСК)",
     "due_time": "Срок (due_time)",
     "due_days_offset": "Срок: дней после отправки",
     "first_run_date": "Дата первого запуска",
@@ -111,7 +112,9 @@ def _parse(field: str, raw: str, schedule_type: str | None) -> object:
         return validate_int(raw, 1, 365)
     if field == "due_days_offset":
         return validate_int(raw, 0, 30)                 # 0 — дедлайн в день отправки
-    if field in ("time", "due_time"):
+    if field == "time":
+        return moscow_to_utc(validate_time_str(raw))
+    if field == "due_time":
         return validate_time_str(raw)
     if field == "first_run_date":
         return _parse_date(raw)
@@ -168,13 +171,13 @@ def render_schedule_card(cfg: TaskConfig) -> str:
         f"Тип расписания: {html_escape(cfg.schedule_type)}",
         f"Значение расписания: {html_escape(cfg.schedule_value) if cfg.schedule_value else '—'}",
         f"Интервал (дней): {cfg.schedule_interval if cfg.schedule_interval is not None else '—'}",
-        f"Время: {cfg.time.strftime('%H:%M') if cfg.time else '—'}",
+        f"Время (МСК): {utc_to_moscow(cfg.time).strftime('%H:%M') if cfg.time else '—'}",
         f"Срок (due_time): {cfg.due_time.strftime('%H:%M') if cfg.due_time else '—'}",
         f"Срок: дней после отправки: {cfg.due_days_offset}",
         f"Дата первого запуска: {cfg.first_run_date.isoformat() if cfg.first_run_date else '—'}",
         f"Запуск в выходные: {'да' if cfg.run_on_weekends else 'нет'}",
         f"Пропуск праздников: {'да' if cfg.skip_holidays else 'нет'}",
-        f"Ближайший запуск: {cfg.next_run_at.strftime('%d.%m.%Y %H:%M') if cfg.next_run_at else '—'}",
+        f"Ближайший запуск (МСК): {utc_dt_to_moscow(cfg.next_run_at).strftime('%d.%m.%Y %H:%M') if cfg.next_run_at else '—'}",
     ]
     return "\n".join(lines)
 
@@ -311,7 +314,7 @@ async def _start_edit_field(callback: CallbackQuery, session, state: FSMContext 
     if state is None:
         await callback.answer("Недоступно", show_alert=True)
         return
-    current = getattr(cfg, field)
+    current = utc_to_moscow(cfg.time) if field == "time" else getattr(cfg, field)
     await state.set_state(AdminStates.waiting_sch_edit)
     await state.update_data(config_id=config_id, field=field)
     hint = _hint_for(field, cfg.schedule_type)
@@ -325,7 +328,9 @@ async def _start_edit_field(callback: CallbackQuery, session, state: FSMContext 
 def _hint_for(field: str, schedule_type: str | None) -> str:
     if field == "schedule_interval":
         return "Введите интервал в днях (целое число, 1-365):"
-    if field in ("time", "due_time"):
+    if field == "time":
+        return "Введите время в формате ЧЧ:ММ (МСК):"
+    if field == "due_time":
         return "Введите время в формате ЧЧ:ММ:"
     if field == "due_days_offset":
         return "Введите число дней после дня отправки (0-30, 0 — тот же день):"

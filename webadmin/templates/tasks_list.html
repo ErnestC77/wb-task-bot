@@ -15,7 +15,7 @@
         <tr>
             <td class="border px-3 py-2">{{ c.title }}</td>
             <td class="border px-3 py-2">{{ c.schedule_type }}</td>
-            <td class="border px-3 py-2">{{ c.time.strftime('%H:%M') if c.time else "—" }}</td>
+            <td class="border px-3 py-2">{{ (c.time | utc_to_msk).strftime('%H:%M') if c.time else "—" }}</td>
             <td class="border px-3 py-2">{{ "Да" if c.is_active else "Нет" }}</td>
             <td class="border px-3 py-2"><a href="/tasks/{{ c.id }}/edit" class="text-blue-600 hover:underline">Редактировать</a></td>
         </tr>

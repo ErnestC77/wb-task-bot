@@ -4,6 +4,7 @@ from datetime import date, datetime, time, timedelta
 from apscheduler.triggers.cron import CronTrigger
 
 from bot.database.models import ScheduleType, TaskConfig
+from bot.utils.datetime_utils import utc_to_moscow
 
 
 def date_range(start: date, end: date):
@@ -27,7 +28,10 @@ def project_occurrences(config: TaskConfig, range_start: date, range_end: date) 
     if not config.is_active:
         return []
     st = config.schedule_type
-    t = config.time or time(9, 0)
+    # config.time хранится в UTC (планировщик работает в naive-UTC) — сетка
+    # расписания показывается человеку, поэтому конвертируем в МСК, иначе
+    # админ/клиент видит время на 3 часа раньше реальной отправки.
+    t = utc_to_moscow(config.time) or time(9, 0)
     if st == ScheduleType.CRON:
         return _project_cron(config, range_start, range_end)
     result: list[datetime] = []

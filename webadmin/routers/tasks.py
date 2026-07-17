@@ -9,6 +9,7 @@ from bot.database.repositories.task_repository import TaskRepository
 from bot.database.repositories.topic_repository import TopicRepository
 from bot.database.repositories.user_repository import UserRepository
 from bot.handlers.admin.task_configs import _slugify_external_id
+from bot.utils.datetime_utils import moscow_to_utc, utc_to_moscow
 from bot.utils.validation import validate_int, validate_time_str
 from webadmin.auth import require_staff
 from webadmin.csrf import verify_csrf_form
@@ -16,6 +17,7 @@ from webadmin.deps import get_db
 
 router = APIRouter(dependencies=[Depends(require_staff)])
 templates = Jinja2Templates(directory="webadmin/templates")
+templates.env.filters["utc_to_msk"] = utc_to_moscow
 ROLES = ["owner", "partner", "manager_wb", "logistic"]
 
 
@@ -47,9 +49,14 @@ async def _render_form(request: Request, session: AsyncSession, task, error: str
                        status_code: int = 200):
     users = await UserRepository(session).get_all(include_inactive=True)
     topics = await TopicRepository(session).get_all(include_inactive=True)
+    # task.time хранится в UTC (см. bot/utils/datetime_utils.moscow_to_utc) —
+    # админ вводит и должен видеть время по МСК, поэтому в форму передаём
+    # отдельное сконвертированное значение, а не время из самой ORM-модели
+    # (мутировать task.time напрямую нельзя — session может закоммитить его).
+    time_msk = utc_to_moscow(task.time) if task and task.time else None
     return templates.TemplateResponse("task_form.html", {
-        "request": request, "task": task, "users": users, "topics": topics,
-        "roles": ROLES, "error": error}, status_code=status_code)
+        "request": request, "task": task, "time_msk": time_msk, "users": users,
+        "topics": topics, "roles": ROLES, "error": error}, status_code=status_code)
 
 
 def _build_payload(external_task_id: str, title: str, description: str, scenario: str,
@@ -57,7 +64,7 @@ def _build_payload(external_task_id: str, title: str, description: str, scenario
                    schedule_type: str, schedule_value: str, schedule_interval: str,
                    time_str: str, due_time_str: str, due_days_offset: str,
                    need_approval: str | None, is_active: str | None) -> dict:
-    parsed_time = validate_time_str(time_str)
+    parsed_time = moscow_to_utc(validate_time_str(time_str))
     parsed_due_time = validate_time_str(due_time_str) if due_time_str.strip() else None
     parsed_offset = validate_int(due_days_offset, 0, 30)
     value, interval = _parse_schedule(schedule_type, schedule_value, schedule_interval)

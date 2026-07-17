@@ -368,3 +368,39 @@ async def test_schedule_card_shows_due_days_offset(session):
     await session.commit()
     from bot.handlers.admin.schedules import render_schedule_card
     assert "Срок: дней после отправки: 3" in render_schedule_card(cfg)
+
+
+# ---------------------------------------------------------------------------
+# МСК<->UTC для поля time (баг: планировщик работает в naive-UTC, а admin
+# вводит время по МСК — без конвертации задача уходила на 3 часа позже).
+# due_time сознательно НЕ конвертируется (используется только текстом в
+# сообщении сотруднику, как есть — см. bot/utils/datetime_utils.moscow_to_utc).
+# ---------------------------------------------------------------------------
+
+async def test_apply_schedule_field_time_converts_msk_to_utc(session):
+    from datetime import time
+    owner = await _owner(session)
+    cfg, _ = await make_config(session)
+    from bot.handlers.admin.schedules import apply_schedule_field
+    ok, _ = await apply_schedule_field(session, owner, cfg.id, "time", "09:30", None)
+    assert ok is True
+    assert cfg.time == time(6, 30)
+
+
+async def test_apply_schedule_field_due_time_not_converted(session):
+    from datetime import time
+    owner = await _owner(session)
+    cfg, _ = await make_config(session)
+    from bot.handlers.admin.schedules import apply_schedule_field
+    ok, _ = await apply_schedule_field(session, owner, cfg.id, "due_time", "18:00", None)
+    assert ok is True
+    assert cfg.due_time == time(18, 0)
+
+
+async def test_schedule_card_shows_time_in_msk(session):
+    from datetime import time
+    cfg, _ = await make_config(session)
+    cfg.time = time(6, 30)                                 # хранится в UTC
+    await session.commit()
+    from bot.handlers.admin.schedules import render_schedule_card
+    assert "Время (МСК): 09:30" in render_schedule_card(cfg)

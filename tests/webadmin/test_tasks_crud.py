@@ -60,3 +60,20 @@ async def test_edit_task_updates_title(client, session_factory):
     listing = await client.get("/tasks")
     assert "Новое название" in listing.text
     assert "Старое название" not in listing.text
+
+
+# ---------------------------------------------------------------------------
+# МСК<->UTC для поля time (баг: планировщик работает в naive-UTC, а admin
+# вводит время по МСК через веб-форму — без конвертации задача уходила на
+# 3 часа позже). Тестируем _build_payload напрямую, без HTTP-клиента: он
+# уже задет отдельным (существовавшим до этого фикса) сбоем шаблонизатора
+# в тестовом окружении (Jinja2 LRUCache), не связанным с этим багом.
+# ---------------------------------------------------------------------------
+
+def test_build_payload_converts_time_msk_to_utc():
+    from datetime import time
+    from webadmin.routers.tasks import _build_payload
+    payload = _build_payload(
+        "ext", "Т", "", "simple", "", "", "", "daily", "", "",
+        "09:30", "", "0", None, None)
+    assert payload["time"] == time(6, 30)

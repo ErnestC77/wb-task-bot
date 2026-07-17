@@ -602,7 +602,7 @@ async def test_full_creation_wizard_creates_inactive_config(session):
     assert created.scenario == TaskScenario.SIMPLE
     assert created.schedule_type == ScheduleType.EVERY_N_DAYS
     assert created.schedule_interval == 3
-    assert created.time == time(9, 30)
+    assert created.time == time(6, 30)  # ввод "09:30" - МСК, хранится в UTC (МСК-3)
     assert created.need_approval is True
     assert created.remind_after_hours == 3
     assert created.second_remind_after_hours == 6
@@ -619,3 +619,30 @@ async def test_cancel_creation_clears_state(session):
     assert state.state is not None
     await _cancel_create(callback, state)
     assert state.state is None and state.data == {}
+
+
+# ---------------------------------------------------------------------------
+# МСК<->UTC для поля time (баг: планировщик работает в naive-UTC, а admin
+# вводит время по МСК — без конвертации задача уходила на 3 часа позже).
+# due_time сознательно НЕ конвертируется (используется только текстом в
+# сообщении сотруднику, как есть — см. bot/utils/datetime_utils.moscow_to_utc).
+# ---------------------------------------------------------------------------
+
+async def test_parse_field_raw_time_converts_msk_to_utc(session):
+    from bot.handlers.admin.task_configs import parse_field_raw
+    value = await parse_field_raw(session, "time", "09:30")
+    assert value == time(6, 30)
+
+
+async def test_parse_field_raw_due_time_not_converted(session):
+    from bot.handlers.admin.task_configs import parse_field_raw
+    value = await parse_field_raw(session, "due_time", "18:00")
+    assert value == time(18, 0)
+
+
+async def test_render_config_card_shows_time_in_msk(session):
+    cfg, _ = await make_config(session)
+    cfg.time = time(6, 30)                                 # хранится в UTC
+    await session.commit()
+    from bot.handlers.admin.task_configs import render_config_card
+    assert "Время (МСК): 09:30" in await render_config_card(session, cfg)

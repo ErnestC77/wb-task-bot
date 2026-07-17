@@ -63,8 +63,8 @@
         <input type="text" name="schedule_interval" value="{{ task.schedule_interval if task and task.schedule_interval else '' }}" class="w-full border rounded px-3 py-2">
     </div>
     <div>
-        <label class="block text-sm font-medium">Время отправки (ЧЧ:ММ)</label>
-        <input type="text" name="time" value="{{ task.time.strftime('%H:%M') if task and task.time else '09:00' }}" required class="w-full border rounded px-3 py-2">
+        <label class="block text-sm font-medium">Время отправки (ЧЧ:ММ, МСК)</label>
+        <input type="text" name="time" value="{{ time_msk.strftime('%H:%M') if time_msk else '09:00' }}" required class="w-full border rounded px-3 py-2">
     </div>
     <div>
         <label class="block text-sm font-medium">Дедлайн (ЧЧ:ММ, пусто = сутки от отправки)</label>

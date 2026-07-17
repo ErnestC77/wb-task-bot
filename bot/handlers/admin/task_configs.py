@@ -68,6 +68,7 @@ from bot.services.audit_service import AuditService
 from bot.services.setting_service import SettingService
 from bot.services.user_service import UserService
 from bot.states.admin_states import AdminStates
+from bot.utils.datetime_utils import moscow_to_utc, utc_dt_to_moscow, utc_to_moscow
 from bot.utils.html_utils import code, html_escape
 from bot.utils.validation import validate_int, validate_time_str
 
@@ -189,7 +190,7 @@ FIELD_HINTS: dict[str, str] = {
     "schedule_type": "Введите тип расписания (daily/weekly/monthly/every_n_days/cron):",
     "schedule_value": "Введите значение расписания или «-»:",
     "schedule_interval": "Введите интервал в днях (целое число) или «-»:",
-    "time": "Введите время в формате ЧЧ:ММ или «-»:",
+    "time": "Введите время в формате ЧЧ:ММ (МСК) или «-»:",
     "due_time": "Введите срок в формате ЧЧ:ММ или «-»:",
     "first_run_date": "Введите дату в формате ГГГГ-ММ-ДД или «-»:",
     "remind_after_hours": "Введите часы (целое число) или «-» для значения по умолчанию:",
@@ -273,7 +274,9 @@ async def parse_field_raw(session, field: str, raw: str) -> object:
         return None if empty else raw
     if field == "schedule_interval":
         return None if empty else validate_int(raw, 1)
-    if field in ("time", "due_time"):
+    if field == "time":
+        return None if empty else moscow_to_utc(validate_time_str(raw))
+    if field == "due_time":
         return None if empty else validate_time_str(raw)
     if field == "first_run_date":
         return None if empty else _parse_date(raw)
@@ -303,7 +306,7 @@ async def render_config_card(session, cfg: TaskConfig) -> str:
         f"Тип расписания: {html_escape(cfg.schedule_type)}",
         f"Значение расписания: {html_escape(cfg.schedule_value) if cfg.schedule_value else '—'}",
         f"Интервал (дней): {cfg.schedule_interval if cfg.schedule_interval is not None else '—'}",
-        f"Время: {cfg.time.strftime('%H:%M') if cfg.time else '—'}",
+        f"Время (МСК): {utc_to_moscow(cfg.time).strftime('%H:%M') if cfg.time else '—'}",
         f"Срок (due_time): {cfg.due_time.strftime('%H:%M') if cfg.due_time else '—'}",
         f"Дата первого запуска: {cfg.first_run_date.isoformat() if cfg.first_run_date else '—'}",
         f"Запуск в выходные: {'да' if cfg.run_on_weekends else 'нет'}",
@@ -313,7 +316,7 @@ async def render_config_card(session, cfg: TaskConfig) -> str:
         f"Второе напоминание через (ч): {cfg.second_remind_after_hours if cfg.second_remind_after_hours is not None else '—'}",
         f"Получатель вопросов: {html_escape(receiver)}",
         f"Статус: {'активен' if cfg.is_active else 'неактивен'}",
-        f"Ближайший запуск: {cfg.next_run_at.strftime('%d.%m.%Y %H:%M') if cfg.next_run_at else '—'}",
+        f"Ближайший запуск (МСК): {utc_dt_to_moscow(cfg.next_run_at).strftime('%d.%m.%Y %H:%M') if cfg.next_run_at else '—'}",
     ]
     return "\n".join(lines)
 
@@ -720,13 +723,13 @@ async def handle_cfg_create_message(message: Message, session, state: FSMContext
             return
         await state.update_data(schedule_value=value, schedule_interval=interval, step="time")
         await message.answer(
-            "Введите время создания задачи (ЧЧ:ММ) или «-» для 09:00 по умолчанию:",
+            "Введите время создания задачи (ЧЧ:ММ, МСК) или «-» для 09:00 по умолчанию:",
             reply_markup=cancel_creation_keyboard())
         return
 
     if step == "time":
         try:
-            value = None if raw in ("", "-") else validate_time_str(raw)
+            value = None if raw in ("", "-") else moscow_to_utc(validate_time_str(raw))
         except ValueError as exc:
             await message.answer(str(exc))
             return
@@ -814,7 +817,7 @@ async def _cr_pick_schedule_type(callback: CallbackQuery, state: FSMContext, k: 
         await state.update_data(schedule_type=k, schedule_value=None, schedule_interval=None,
                                 step="time")
         await callback.message.edit_text(
-            "Введите время создания задачи (ЧЧ:ММ) или «-» для 09:00 по умолчанию:",
+            "Введите время создания задачи (ЧЧ:ММ, МСК) или «-» для 09:00 по умолчанию:",
             reply_markup=cancel_creation_keyboard())
         await callback.answer()
         return

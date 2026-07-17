@@ -14,10 +14,11 @@ def cfg(**kw):
 
 
 def test_daily_occurs_every_day_in_range():
+    # config.time хранится в UTC (9:00) — сетка показывает МСК (12:00).
     c = cfg(schedule_type="daily")
     result = project_occurrences(c, date(2026, 7, 13), date(2026, 7, 15))
     assert result == [
-        datetime(2026, 7, 13, 9, 0), datetime(2026, 7, 14, 9, 0), datetime(2026, 7, 15, 9, 0),
+        datetime(2026, 7, 13, 12, 0), datetime(2026, 7, 14, 12, 0), datetime(2026, 7, 15, 12, 0),
     ]
 
 

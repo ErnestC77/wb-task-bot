@@ -1,6 +1,37 @@
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+MOSCOW_UTC_OFFSET_HOURS = 3
+
+
+def moscow_to_utc(t: time | None) -> time | None:
+    """Планировщик (scheduler_service.py) целиком работает в naive-UTC —
+    любое время, введённое человеком по московскому времени (МСК = UTC+3,
+    без перехода на летнее/зимнее), обязано пройти через эту конвертацию
+    перед записью в TaskConfig.time, иначе задача уйдёт на 3 часа позже
+    задуманного. Не обрабатывает переход через полночь (сдвиг даты здесь
+    взять негде — вызывающий код должен сам решать, нужен ли сдвиг дня)."""
+    if t is None:
+        return None
+    return t.replace(hour=(t.hour - MOSCOW_UTC_OFFSET_HOURS) % 24)
+
+
+def utc_to_moscow(t: time | None) -> time | None:
+    """Обратная к moscow_to_utc — для отображения хранимого в UTC
+    TaskConfig.time администратору по МСК, как он его вводил."""
+    if t is None:
+        return None
+    return t.replace(hour=(t.hour + MOSCOW_UTC_OFFSET_HOURS) % 24)
+
+
+def utc_dt_to_moscow(dt: datetime | None) -> datetime | None:
+    """Как utc_to_moscow, но для полного datetime (next_run_at и т.п.) —
+    timedelta сам корректно переносит дату при переходе через полночь,
+    в отличие от time-only версии."""
+    if dt is None:
+        return None
+    return dt + timedelta(hours=MOSCOW_UTC_OFFSET_HOURS)
+
 
 def now_tz(tz_name: str) -> datetime:
     return datetime.now(ZoneInfo(tz_name))
