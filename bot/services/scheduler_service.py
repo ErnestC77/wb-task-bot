@@ -233,6 +233,35 @@ class SchedulerService:
                                args=[self.bot, self.session_factory, self],
                                id="pending_rebuild", misfire_grace_time=GRACE)
 
+    async def register_heartbeat_job(self) -> None:
+        """Всегда включён (как pending_rebuild) — см. docstring
+        bot/services/heartbeat_service.py про инцидент 2026-07-17."""
+        from bot.services.heartbeat_service import heartbeat_job
+        if self.scheduler.get_job("heartbeat"):
+            self.scheduler.remove_job("heartbeat")
+        self.scheduler.add_job(heartbeat_job, "interval", seconds=30,
+                               args=[self.session_factory],
+                               id="heartbeat", misfire_grace_time=GRACE)
+
+    async def register_schedule_watchdog_job(self) -> None:
+        """По образцу register_status_notification_job — снимает job
+        "schedule_watchdog" и, если schedule_watchdog.enabled=True,
+        регистрирует schedule_watchdog_job с интервалом
+        schedule_watchdog.interval_minutes. См. docstring
+        bot/services/schedule_watchdog_service.py про инцидент 2026-07-17."""
+        from bot.services.schedule_watchdog_service import schedule_watchdog_job
+        from bot.services.setting_service import SettingService
+        async with self.session_factory() as session:
+            settings = SettingService(session)
+            enabled = bool(await settings.get("schedule_watchdog.enabled"))
+            minutes = int(await settings.get("schedule_watchdog.interval_minutes"))
+        if self.scheduler.get_job("schedule_watchdog"):
+            self.scheduler.remove_job("schedule_watchdog")
+        if enabled:
+            self.scheduler.add_job(schedule_watchdog_job, "interval", minutes=minutes,
+                                   args=[self.bot, self.session_factory],
+                                   id="schedule_watchdog", misfire_grace_time=GRACE)
+
     async def register_delivery_log_job(self) -> None:
         """Часть Б: по образцу register_sync_job — снимает job "delivery_log"
         и, если delivery_log.enabled=True, регистрирует delivery_log_job с
@@ -323,4 +352,6 @@ async def setup_scheduler(bot: Bot, session_factory) -> AsyncIOScheduler:
     await svc.register_status_notification_job()
     await svc.register_status_history_job()
     await svc.register_pending_rebuild_job()
+    await svc.register_heartbeat_job()
+    await svc.register_schedule_watchdog_job()
     return scheduler

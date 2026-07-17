@@ -112,8 +112,8 @@ def test_registry_matches_seed_migration_exactly():
     Он должен ТОЧНО (97 ключей) совпадать по составу, дефолтам, типам и категориям
     с тем, что вставляет seed-миграция 0002_seed_defaults.py."""
     seed = _load_seed_defaults()
-    assert len(seed) == 97
-    assert len(SETTINGS_REGISTRY) == 97
+    assert len(seed) == 101
+    assert len(SETTINGS_REGISTRY) == 101
 
     seed_keys = {key for key, _, _, _ in seed}
     assert set(SETTINGS_REGISTRY.keys()) == seed_keys
@@ -131,6 +131,7 @@ def test_registry_matches_seed_migration_exactly():
         "general": 14, "article_check": 19, "approval": 10, "reminders": 15,
         "questions": 8, "reports": 14, "sync": 8, "internal": 1,
         "delivery_log": 2, "status_notifications": 4, "status_history_log": 2,
+        "schedule_watchdog": 4,
     }
 
 

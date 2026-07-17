@@ -269,6 +269,26 @@ def _defs() -> list[SettingDef]:
                    "Выгружать историю смен статуса в лист «История статусов»"),
         SettingDef("status_history_log.interval_minutes", int, 60, "status_history_log",
                    "Интервал выгрузки истории статусов (минуты)", min_=5, max_=1440),
+        # --- schedule_watchdog ---
+        # Добавлено после инцидента 2026-07-17 (задачи не отправлялись 3 часа
+        # из-за бага МСК/UTC — никто не заметил, пока сотрудники не пожаловались).
+        # Смысл: если у активного TaskConfig next_run_at просрочен дольше
+        # grace_minutes, значит job в живом планировщике не сработал так, как
+        # ожидалось (баг расписания, зависший event loop и т.п.) — тот же
+        # сигнал, которым recover_jobs уже пользуется при СТАРТЕ бота
+        # (scheduler_recovery_service.py), но здесь проверяется периодически
+        # ВО ВРЕМЯ работы, а не только один раз при рестарте.
+        SettingDef("schedule_watchdog.enabled", bool, True, "schedule_watchdog",
+                   "Слать алерт, если запланированная задача не выполнилась вовремя"),
+        SettingDef("schedule_watchdog.grace_minutes", int, 30, "schedule_watchdog",
+                   "Через сколько минут просрочки next_run_at считать расписание "
+                   "зависшим", min_=5, max_=1440),
+        SettingDef("schedule_watchdog.interval_minutes", int, 15, "schedule_watchdog",
+                   "Как часто проверять просроченные расписания (минуты)",
+                   min_=1, max_=180),
+        SettingDef("schedule_watchdog.targets", object, ["owner"], "schedule_watchdog",
+                   "Роли-получатели алерта о зависшем расписании",
+                   value_kind="multi_choice", choices=("owner", "partner")),
         # --- internal ---
         SettingDef("internal.settings_version", int, 1, "internal", is_editable=False),
     ]

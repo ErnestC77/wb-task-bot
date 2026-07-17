@@ -311,6 +311,63 @@ async def test_register_status_history_job_enabled_interval_no_duplicates(sessio
     assert jobs[0].trigger.interval.total_seconds() == 30 * 60
 
 
+async def test_register_heartbeat_job_always_on_no_duplicates(session_factory):
+    """Инцидент 2026-07-17: heartbeat всегда включён (как pending_rebuild),
+    без настройки enabled/disabled — не опциональная фича."""
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    for _ in range(3):
+        await svc.register_heartbeat_job()
+    jobs = [j for j in scheduler.get_jobs() if j.id == "heartbeat"]
+    assert len(jobs) == 1
+    assert jobs[0].trigger.interval.total_seconds() == 30
+
+
+async def test_register_schedule_watchdog_job_enabled_interval_no_duplicates(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("schedule_watchdog.enabled", True,
+                                    actor_user_id=None)
+        await SettingService(s).set("schedule_watchdog.interval_minutes", 20,
+                                    actor_user_id=None)
+        await s.commit()
+
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    for _ in range(3):
+        await svc.register_schedule_watchdog_job()
+    jobs = [j for j in scheduler.get_jobs() if j.id == "schedule_watchdog"]
+    assert len(jobs) == 1
+    assert jobs[0].trigger.interval.total_seconds() == 20 * 60
+
+
+async def test_register_schedule_watchdog_job_disabled_removes_job(session_factory):
+    from bot.services.setting_service import SettingService
+
+    async with session_factory() as s:
+        await SettingService(s).set("schedule_watchdog.enabled", True, actor_user_id=None)
+        await s.commit()
+    scheduler = AsyncIOScheduler()
+    svc = SchedulerService(scheduler, AsyncMock(), session_factory)
+    await svc.register_schedule_watchdog_job()
+    assert scheduler.get_job("schedule_watchdog") is not None
+
+    async with session_factory() as s:
+        await SettingService(s).set("schedule_watchdog.enabled", False, actor_user_id=None)
+        await s.commit()
+    await svc.register_schedule_watchdog_job()
+    assert scheduler.get_job("schedule_watchdog") is None
+
+
+async def test_setup_scheduler_registers_heartbeat_and_watchdog_jobs(session_factory):
+    from bot.services.scheduler_service import setup_scheduler
+
+    scheduler = await setup_scheduler(AsyncMock(), session_factory)
+    assert scheduler.get_job("heartbeat") is not None
+    assert scheduler.get_job("schedule_watchdog") is not None  # enabled=True по умолчанию
+
+
 async def test_register_status_history_job_disabled_removes_job(session_factory):
     from bot.services.setting_service import SettingService
 

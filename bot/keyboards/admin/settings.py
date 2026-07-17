@@ -15,6 +15,7 @@ CATEGORY_TITLES: dict[str, str] = {
     "delivery_log": "Журнал отправок",
     "status_notifications": "Уведомления о статусах",
     "status_history_log": "История статусов (лист)",
+    "schedule_watchdog": "Контроль расписания",
 }
 
 # Человеческие подписи для отдельных значений multi_choice-настроек (чек-боксы

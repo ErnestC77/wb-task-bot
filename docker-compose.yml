@@ -22,11 +22,17 @@ services:
     volumes: ["./credentials:/app/credentials:ro"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('db', 5432), 2)"]
+      # Инцидент 2026-07-17: старый healthcheck проверял только доступность
+      # порта Postgres из контейнера — контейнер оставался "healthy" даже
+      # если сам dispatcher/scheduler завис. heartbeat_job (bot/services/
+      # heartbeat_service.py) пишет unix-время в файл каждые 30с ПОСЛЕ
+      # реального запроса к БД, через тот же event loop, где крутится бот —
+      # если файл не обновлялся >90с, что-то реально зависло.
+      test: ["CMD", "python", "-c", "import time,sys\ntry:\n  age = time.time() - float(open('/tmp/wb_bot_heartbeat').read())\nexcept OSError:\n  sys.exit(1)\nsys.exit(0 if age < 90 else 1)"]
       interval: 30s
       timeout: 5s
-      retries: 5
-      start_period: 20s
+      retries: 3
+      start_period: 60s
 
   webadmin:
     build: .
@@ -37,6 +43,15 @@ services:
         condition: service_healthy
     ports: ["127.0.0.1:8080:8080"]     # только локально; наружу — через nginx+TLS
     restart: unless-stopped
+    healthcheck:
+      # Раньше не было вообще никакого healthcheck (только restart:
+      # unless-stopped при падении процесса). /healthz (webadmin/main.py)
+      # реально обращается к БД, не просто проверяет "процесс жив".
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   pgdata:

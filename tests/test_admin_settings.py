@@ -401,6 +401,26 @@ async def test_status_history_settings_rebuild_status_history_job(session):
     scheduler_svc.register_status_notification_job.assert_not_awaited()
 
 
+async def test_schedule_watchdog_settings_rebuild_watchdog_job(session):
+    """Инцидент 2026-07-17: правка schedule_watchdog.* через общий редактор
+    настроек пересобирает ИМЕННО schedule_watchdog-job, а не соседние job'ы."""
+    cfg, valya = await make_config(session)
+    from bot.handlers.admin.settings import SCHEDULER_AFFECTING, apply_setting_input
+
+    assert "schedule_watchdog.enabled" in SCHEDULER_AFFECTING
+    assert "schedule_watchdog.interval_minutes" in SCHEDULER_AFFECTING
+    assert "schedule_watchdog.grace_minutes" not in SCHEDULER_AFFECTING
+
+    scheduler_svc = AsyncMock()
+    ok, _ = await apply_setting_input(session, valya,
+                                      "schedule_watchdog.interval_minutes",
+                                      "20", scheduler_svc)
+    assert ok is True
+    scheduler_svc.register_schedule_watchdog_job.assert_awaited()
+    scheduler_svc.register_sync_job.assert_not_awaited()
+    scheduler_svc.register_status_history_job.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Чек-боксы для настроек-списков (status_notifications.statuses/.targets,
 # reminders.targets/.escalation_targets) — тап по пункту вместо ввода JSON.

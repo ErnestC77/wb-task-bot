@@ -134,6 +134,11 @@ SETTINGS_DEFAULTS: list[tuple[str, object, str, str]] = [
     # status_history_log (2)
     ("status_history_log.enabled", False, "bool", "status_history_log"),
     ("status_history_log.interval_minutes", 60, "int", "status_history_log"),
+    # schedule_watchdog (4)
+    ("schedule_watchdog.enabled", True, "bool", "schedule_watchdog"),
+    ("schedule_watchdog.grace_minutes", 30, "int", "schedule_watchdog"),
+    ("schedule_watchdog.interval_minutes", 15, "int", "schedule_watchdog"),
+    ("schedule_watchdog.targets", ["owner"], "json", "schedule_watchdog"),
     # internal (1)
     ("internal.settings_version", 1, "int", "internal"),
 ]

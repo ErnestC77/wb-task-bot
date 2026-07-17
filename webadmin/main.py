@@ -1,9 +1,12 @@
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
 from webadmin.auth import ClientLoginRequired, StaffLoginRequired, require_client, require_staff
 from webadmin.config import get_webadmin_settings
+from webadmin.deps import get_db
 from webadmin.routers.auth import router as auth_router
 from webadmin.routers.articles import router as articles_router
 from webadmin.routers.reports import router as reports_router
@@ -31,9 +34,15 @@ def create_app() -> FastAPI:
     async def _client_login_required(request: Request, exc: ClientLoginRequired):
         return RedirectResponse(url="/client/login", status_code=303)
 
-    @app.get("/healthz", response_class=PlainTextResponse)
-    async def healthz() -> str:
-        return "ok"
+    @app.get("/healthz")
+    async def healthz(session: AsyncSession = Depends(get_db)):
+        # Раньше docker-compose вообще не проверял webadmin (только
+        # restart: unless-stopped при падении процесса) — реальный запрос
+        # к БД, а не просто "процесс жив", ловит зависшее соединение с
+        # Postgres так же, как heartbeat_job у bot-сервиса (см. инцидент
+        # 2026-07-17 про healthcheck, который ничего не проверял).
+        await session.execute(text("SELECT 1"))
+        return PlainTextResponse("ok")
 
     @app.get("/", dependencies=[Depends(require_staff)])
     async def home() -> RedirectResponse:
