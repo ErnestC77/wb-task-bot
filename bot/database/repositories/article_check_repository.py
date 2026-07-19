@@ -92,6 +92,12 @@ class ArticleCheckRepository:
                                            completed_at=datetime.utcnow()))
         await self.session.flush()
 
+    async def cancel_session(self, session_id: int) -> None:
+        await self.session.execute(update(ArticleCheckSession)
+                                   .where(ArticleCheckSession.id == session_id)
+                                   .values(status=SessionStatus.CANCELLED))
+        await self.session.flush()
+
     async def items_action_required_without_action(self, session_id: int
                                                    ) -> list[ArticleCheckItem]:
         sub = select(ArticleAction.article_check_item_id).where(

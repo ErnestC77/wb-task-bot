@@ -307,3 +307,46 @@ async def test_mark_rerender_uses_real_item_session_not_spoofed_callback(session
     await handle_mark(callback, cb_data, session)
 
     assert captured["session_id"] == s_a.id          # рендер — по реальной сессии item'а
+
+
+# ---------------------------------------------------------------------------
+# cancel — «✖ Отменить проверку» существовала в клавиатуре без обработчика
+# (найдено 2026-07-19 при разборе инцидента с config id=1: нажатие ничего
+# не делало, ошибочно принято мной за уже рабочую функцию).
+# ---------------------------------------------------------------------------
+
+async def test_cancel_check_denies_foreign_registered_user(session):
+    inst, valya, owner = await seed(session, n_articles=3)
+    svc = ArticleCheckService(session)
+    s = await svc.start_check(inst, valya)
+    await session.commit()
+
+    from bot.handlers.article_check import handle_cancel_check
+    callback = AsyncMock()
+    callback.from_user.id = owner.telegram_id      # зарегистрирован, но не ответственный
+    cb_data = ChkCb(a="cancel", s=s.id)
+    await handle_cancel_check(callback, cb_data, session)
+    _denied(callback)
+    callback.message.edit_text.assert_not_awaited()
+    assert (await TaskRepository(session).get_instance(inst.id)).status == TaskStatus.IN_PROGRESS
+
+
+async def test_cancel_check_edits_message_and_cancels(session):
+    from bot.database.models import ArticleCheckSession, SessionStatus
+
+    inst, valya, _ = await seed(session, n_articles=3)
+    svc = ArticleCheckService(session)
+    s = await svc.start_check(inst, valya)
+    await session.commit()
+
+    from bot.handlers.article_check import handle_cancel_check
+    callback = AsyncMock()
+    callback.from_user.id = valya.telegram_id
+    cb_data = ChkCb(a="cancel", s=s.id)
+    await handle_cancel_check(callback, cb_data, session)
+
+    callback.message.edit_text.assert_awaited_once()
+    got_inst = await TaskRepository(session).get_instance(inst.id)
+    assert got_inst.status == TaskStatus.CANCELLED
+    got_session = await session.get(ArticleCheckSession, s.id)
+    assert got_session.status == SessionStatus.CANCELLED

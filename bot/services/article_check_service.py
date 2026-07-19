@@ -140,6 +140,24 @@ class ArticleCheckService:
             return False, "Не удалось завершить проверку: статус задачи изменился"
         return True, "Проверка завершена"
 
+    async def cancel_check(self, inst: TaskInstance, actor: User) -> tuple[bool, str]:
+        """«✖ Отменить проверку» в пачке (bot/handlers/article_check.py) — раньше
+        кнопка существовала в клавиатуре, но обработчика не было вообще (баг,
+        найден при разборе инцидента с article_check config id=1, 2026-07-19):
+        нажатие ничего не делало. По образцу finish_check выше."""
+        if inst.responsible_user_id != actor.id:
+            raise PermissionError("Отменить проверку может только ответственный")
+        s = await self.repo.get_session_by_instance(inst.id)
+        if s is None:
+            return False, "Проверка не начата"
+        got = await self.tasks.transition_status(
+            inst.id, [TaskStatus.IN_PROGRESS], TaskStatus.CANCELLED, actor.id,
+            "btn:cancel_check", cancelled_at=datetime.utcnow())
+        if got is None:
+            return False, "Не удалось отменить: статус задачи изменился"
+        await self.repo.cancel_session(s.id)
+        return True, "Проверка отменена"
+
     async def create_action(self, item_id: int, actor: User, category_id: int,
                             problem_type_id: int, decision_type_id: int,
                             comment: str | None, next_check_date: date) -> ArticleAction:

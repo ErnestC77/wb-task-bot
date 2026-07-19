@@ -177,6 +177,47 @@ async def test_finish_check_without_approval_refreshes_task_message(session):
     bot.edit_message_text.assert_called_once()   # refresh_task_message вызван
 
 
+# ---------------------------------------------------------------------------
+# cancel_check — «✖ Отменить проверку» существовала в клавиатуре без
+# обработчика (найдено 2026-07-19 при разборе инцидента с config id=1:
+# нажатие ничего не делало).
+# ---------------------------------------------------------------------------
+
+async def test_cancel_check_only_responsible(session):
+    inst, valya, owner = await seed(session, n_articles=3)
+    svc = ArticleCheckService(session)
+    await svc.start_check(inst, valya)
+    with pytest.raises(PermissionError):
+        await svc.cancel_check(inst, owner)
+
+
+async def test_cancel_check_transitions_instance_and_session(session):
+    from bot.database.models import ArticleCheckSession, SessionStatus
+
+    inst, valya, _ = await seed(session, n_articles=3)
+    svc = ArticleCheckService(session)
+    s = await svc.start_check(inst, valya)
+    await session.commit()
+
+    ok, msg = await svc.cancel_check(inst, valya)
+    await session.commit()
+    assert ok is True, msg
+
+    got_inst = await TaskRepository(session).get_instance(inst.id)
+    assert got_inst.status == TaskStatus.CANCELLED
+    assert got_inst.cancelled_at is not None
+
+    got_session = await session.get(ArticleCheckSession, s.id)
+    assert got_session.status == SessionStatus.CANCELLED
+
+
+async def test_cancel_check_without_started_session_fails(session):
+    inst, valya, _ = await seed(session, n_articles=3)
+    svc = ArticleCheckService(session)
+    ok, msg = await svc.cancel_check(inst, valya)
+    assert ok is False
+
+
 async def test_next_batch_clamps_at_last_batch(session):
     inst, valya, _ = await seed(session, n_articles=20)   # batch_size=15 -> 2 пачки
     svc = ArticleCheckService(session)

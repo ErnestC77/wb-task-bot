@@ -187,6 +187,34 @@ async def handle_finish_batch(callback: CallbackQuery, callback_data: ChkCb, ses
     await callback.answer()
 
 
+@router.callback_query(ChkCb.filter(F.a == "cancel"))
+async def handle_cancel_check(callback: CallbackQuery, callback_data: ChkCb, session):
+    """«✖ Отменить проверку» — кнопка существовала в клавиатуре (batch_keyboard)
+    без зарегистрированного обработчика (нажатие ничего не делало), найдено при
+    разборе инцидента с article_check config id=1, 2026-07-19."""
+    actor = await UserService(session).get_actor(callback.from_user.id)
+    svc = ArticleCheckService(session, callback.bot)
+    s = await session.get(ArticleCheckSession, callback_data.s)
+    if s is None or actor is None:
+        await callback.answer("Недоступно", show_alert=True)
+        return
+    if s.responsible_user_id != actor.id:
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    inst = await svc.tasks.get_instance(s.task_instance_id)
+    try:
+        ok, msg = await svc.cancel_check(inst, actor)
+    except PermissionError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    if not ok:
+        await callback.answer(msg, show_alert=True)
+        return
+    await callback.message.edit_text("✖ Проверка отменена.")
+    await session.commit()
+    await callback.answer(msg)
+
+
 # ---------------------------------------------------------------------------
 # Task 18: FSM фиксации ArticleAction (категория → проблема → решение →
 # комментарий → дата следующей проверки), справочники читаются из БД.
