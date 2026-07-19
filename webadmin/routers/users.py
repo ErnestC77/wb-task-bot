@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.repositories.user_repository import UserRepository
 from bot.utils.validation import validate_int
+from webadmin.audit import log_create, log_edit, snapshot
 from webadmin.auth import require_staff
 from webadmin.csrf import verify_csrf_form
 from webadmin.deps import get_db
@@ -41,8 +42,11 @@ async def user_create(request: Request, session: AsyncSession = Depends(get_db),
         return templates.TemplateResponse("user_form.html", {
             "request": request, "user": None, "roles": ROLES,
             "error": "Пользователь с таким telegram_id уже существует"}, status_code=400)
-    await repo.upsert(tg_id, name, role, is_active=bool(is_active),
-                      private_chat_available=bool(private_chat_available))
+    user = await repo.upsert(tg_id, name, role, is_active=bool(is_active),
+                             private_chat_available=bool(private_chat_available))
+    await log_create(session, "user", user.id, dict(
+        telegram_id=tg_id, name=name, role=role, is_active=bool(is_active),
+        private_chat_available=bool(private_chat_available)))
     await session.commit()
     return RedirectResponse(url="/users", status_code=303)
 
@@ -66,8 +70,13 @@ async def user_update(user_id: int, request: Request, session: AsyncSession = De
     user = await repo.get_by_id(user_id)
     if user is None:
         return RedirectResponse(url="/users", status_code=303)
+    fields = ["name", "role", "is_active", "private_chat_available"]
+    old = snapshot(user, fields)                       # ДО upsert — мутирует user in-place
     await repo.upsert(user.telegram_id, name, role, username=user.username,
                       is_active=bool(is_active),
                       private_chat_available=bool(private_chat_available))
+    new = dict(name=name, role=role, is_active=bool(is_active),
+              private_chat_available=bool(private_chat_available))
+    await log_edit(session, "user", user_id, old, new)
     await session.commit()
     return RedirectResponse(url="/users", status_code=303)

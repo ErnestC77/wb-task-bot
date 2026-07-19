@@ -11,6 +11,7 @@ from bot.database.repositories.user_repository import UserRepository
 from bot.handlers.admin.task_configs import _slugify_external_id
 from bot.utils.datetime_utils import moscow_to_utc, utc_to_moscow
 from bot.utils.validation import validate_int, validate_time_str
+from webadmin.audit import log_create, log_edit, snapshot
 from webadmin.auth import require_staff
 from webadmin.csrf import verify_csrf_form
 from webadmin.deps import get_db
@@ -111,6 +112,7 @@ async def task_create(request: Request, session: AsyncSession = Depends(get_db),
         return await _render_form(request, session, None, str(exc), status_code=400)
     cfg = await TaskRepository(session).upsert_config(payload)
     cfg.pending_rebuild = True
+    await log_create(session, "task_config", cfg.id, payload)
     await session.commit()
     return RedirectResponse(url="/tasks", status_code=303)
 
@@ -144,7 +146,9 @@ async def task_update(config_id: int, request: Request, session: AsyncSession = 
             time, due_time, due_days_offset, need_approval, is_active)
     except ValueError as exc:
         return await _render_form(request, session, task, str(exc), status_code=400)
+    old = snapshot(task, list(payload.keys()))         # ДО upsert_config — мутирует task in-place
     cfg = await repo.upsert_config(payload)
     cfg.pending_rebuild = True
+    await log_edit(session, "task_config", config_id, old, payload)
     await session.commit()
     return RedirectResponse(url="/tasks", status_code=303)

@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.repositories.topic_repository import TopicRepository
 from bot.utils.validation import validate_int
+from webadmin.audit import log_create, log_edit, snapshot
 from webadmin.auth import require_staff
 from webadmin.csrf import verify_csrf_form
 from webadmin.deps import get_db
@@ -40,8 +41,11 @@ async def topic_create(request: Request, session: AsyncSession = Depends(get_db)
     except ValueError as exc:
         return templates.TemplateResponse("topic_form.html", {
             "request": request, "topic": None, "error": str(exc)}, status_code=400)
-    await repo.upsert(topic_key, topic_name, message_thread_id=thread_id,
-                      event_types=event_types or None, is_active=bool(is_active))
+    topic = await repo.upsert(topic_key, topic_name, message_thread_id=thread_id,
+                              event_types=event_types or None, is_active=bool(is_active))
+    await log_create(session, "topic", topic.id, dict(
+        topic_key=topic_key, topic_name=topic_name, message_thread_id=thread_id,
+        event_types=event_types or None, is_active=bool(is_active)))
     await session.commit()
     return RedirectResponse(url="/topics", status_code=303)
 
@@ -69,7 +73,12 @@ async def topic_update(topic_id: int, request: Request, session: AsyncSession = 
     except ValueError as exc:
         return templates.TemplateResponse("topic_form.html", {
             "request": request, "topic": topic, "error": str(exc)}, status_code=400)
+    fields = ["topic_name", "message_thread_id", "event_types", "is_active"]
+    old = snapshot(topic, fields)                      # ДО upsert — мутирует topic in-place
     await repo.upsert(topic.topic_key, topic_name, message_thread_id=thread_id,
                       event_types=event_types or None, is_active=bool(is_active))
+    new = dict(topic_name=topic_name, message_thread_id=thread_id,
+              event_types=event_types or None, is_active=bool(is_active))
+    await log_edit(session, "topic", topic_id, old, new)
     await session.commit()
     return RedirectResponse(url="/topics", status_code=303)

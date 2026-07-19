@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bot.database.repositories.article_repository import ArticleRepository
 from bot.utils.validation import validate_int
+from webadmin.audit import log_create, log_edit, snapshot
 from webadmin.auth import require_staff
 from webadmin.csrf import verify_csrf_form
 from webadmin.deps import get_db
@@ -43,9 +44,12 @@ async def article_create(request: Request, session: AsyncSession = Depends(get_d
     except ValueError as exc:
         return templates.TemplateResponse("article_form.html", {
             "request": request, "article": None, "error": str(exc)}, status_code=400)
-    await repo.upsert(article, product_name=product_name or None, sort_order=order,
-                      is_active=bool(is_active), source="manual",
-                      source_updated_at=datetime.utcnow())
+    row = await repo.upsert(article, product_name=product_name or None, sort_order=order,
+                            is_active=bool(is_active), source="manual",
+                            source_updated_at=datetime.utcnow())
+    await log_create(session, "article", row.id, dict(
+        article=article, product_name=product_name or None, sort_order=order,
+        is_active=bool(is_active)))
     await session.commit()
     return RedirectResponse(url="/articles", status_code=303)
 
@@ -75,8 +79,12 @@ async def article_update(article_id: int, request: Request,
     except ValueError as exc:
         return templates.TemplateResponse("article_form.html", {
             "request": request, "article": row, "error": str(exc)}, status_code=400)
+    fields = ["product_name", "sort_order", "is_active"]
+    old = snapshot(row, fields)                        # ДО upsert — мутирует row in-place
     await repo.upsert(row.article, product_name=product_name or None, sort_order=order,
                       is_active=bool(is_active), source="manual",
                       source_updated_at=datetime.utcnow())
+    new = dict(product_name=product_name or None, sort_order=order, is_active=bool(is_active))
+    await log_edit(session, "article", article_id, old, new)
     await session.commit()
     return RedirectResponse(url="/articles", status_code=303)
